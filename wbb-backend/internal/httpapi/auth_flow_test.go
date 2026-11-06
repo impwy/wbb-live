@@ -427,6 +427,257 @@ func TestRefreshRaceUnderFamilyLock(t *testing.T) {
 	}
 }
 
+// TestStaleCacheDoesNotRevokeFamily: a stale cache value (older sid while
+// the ledger already rotated to a newer session) must neither revoke the
+// family on refresh nor reject a ledger-valid access token — the ledger
+// decides, and the cache repairs itself under the family lock
+// (regression: mismatch alone used to destroy healthy families).
+func TestStaleCacheDoesNotRevokeFamily(t *testing.T) {
+	ts := newTestServer(t)
+	client := newJarClient(t)
+	email := uniqueEmail()
+	_, access0, refresh0 := registerAndLogin(t, ts, client, email)
+
+	// Rotate once: S0 → S1 (cache now holds S1).
+	r1 := refreshWithToken(t, ts, refresh0)
+	if r1.status != http.StatusOK {
+		t.Fatalf("rotate: %d", r1.status)
+	}
+	access1, _ := r1.body["accessToken"].(string)
+	refresh1 := refreshCookieValue(r1.header)
+
+	// Simulate a stale overwrite (e.g. an out-of-band recovery race):
+	// cache points back at the dead S0.
+	sum := sha256.Sum256([]byte(refresh0))
+	tokenHash := hex.EncodeToString(sum[:])
+	var familyID string
+	if err := testPool.QueryRow(t.Context(),
+		`SELECT refresh_family_id::text FROM auth_sessions WHERE refresh_token_hash = $1`, tokenHash,
+	).Scan(&familyID); err != nil {
+		t.Fatalf("find family: %v", err)
+	}
+	var s0 string
+	if err := testPool.QueryRow(t.Context(),
+		`SELECT id::text FROM auth_sessions WHERE refresh_token_hash = $1`, tokenHash,
+	).Scan(&s0); err != nil {
+		t.Fatalf("find s0: %v", err)
+	}
+	if err := testRedis.Set(t.Context(), "wbb:sess:"+familyID, s0, time.Hour).Err(); err != nil {
+		t.Fatalf("stale cache write: %v", err)
+	}
+
+	// Access token for the live session still works (cache repaired).
+	if r := meWithToken(t, ts, access1); r.status != http.StatusOK {
+		t.Fatalf("me with stale cache: %d (want 200, ledger decides)", r.status)
+	}
+	// Refresh with the live token rotates instead of revoking.
+	r2 := refreshWithToken(t, ts, refresh1)
+	if r2.status != http.StatusOK {
+		t.Fatalf("refresh with stale cache: %d body=%v (want 200, no family revocation)", r2.status, r2.body)
+	}
+	access2, _ := r2.body["accessToken"].(string)
+	refresh2 := refreshCookieValue(r2.header)
+	if r := meWithToken(t, ts, access2); r.status != http.StatusOK {
+		t.Fatalf("me after repaired rotation: %d", r.status)
+	}
+	// Pre-rotation tokens are dead as usual.
+	if r := meWithToken(t, ts, access0); r.status != http.StatusUnauthorized {
+		t.Fatalf("access0 after two rotations: %d (want 401)", r.status)
+	}
+	// The family stays alive.
+	if r := refreshWithToken(t, ts, refresh2); r.status != http.StatusOK {
+		t.Fatalf("family must stay alive: %d", r.status)
+	}
+}
+
+// TestConcurrentMissRecoveryAndRotation: with the cache evicted and the
+// family lock held, a protected call (cache recovery) and a refresh
+// (rotation) racing on the same family must leave a consistent state: the
+// refresh wins its rotation, the cache ends at the newest sid and the
+// family survives.
+func TestConcurrentMissRecoveryAndRotation(t *testing.T) {
+	ts := newTestServer(t)
+	client := newJarClient(t)
+	email := uniqueEmail()
+	_, access0, refresh0 := registerAndLogin(t, ts, client, email)
+
+	sum := sha256.Sum256([]byte(refresh0))
+	tokenHash := hex.EncodeToString(sum[:])
+	var familyID string
+	if err := testPool.QueryRow(t.Context(),
+		`SELECT refresh_family_id::text FROM auth_sessions WHERE refresh_token_hash = $1`, tokenHash,
+	).Scan(&familyID); err != nil {
+		t.Fatalf("find family: %v", err)
+	}
+
+	lockTx, err := testPool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin lock: %v", err)
+	}
+	defer lockTx.Rollback(t.Context())
+	if _, err := lockTx.Exec(t.Context(),
+		`SELECT revoked_at FROM auth_session_families WHERE id = $1 FOR UPDATE`, familyID); err != nil {
+		t.Fatalf("lock family: %v", err)
+	}
+	if err := testRedis.Del(t.Context(), "wbb:sess:"+familyID).Err(); err != nil {
+		t.Fatalf("evict cache: %v", err)
+	}
+
+	meStatus := make(chan int, 1)
+	refreshDone := make(chan apiResp, 1)
+	go func() { meStatus <- meWithToken(t, ts, access0).status }()
+	go func() { refreshDone <- refreshWithToken(t, ts, refresh0) }()
+	time.Sleep(500 * time.Millisecond) // both are now parked on the family lock
+	if err := lockTx.Commit(t.Context()); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+
+	meRes := <-meStatus
+	refreshRes := <-refreshDone
+	// The recovery call may legitimately lose to the rotation (S0 revoked).
+	if meRes != http.StatusOK && meRes != http.StatusUnauthorized {
+		t.Fatalf("me during race: %d", meRes)
+	}
+	// The refresh must succeed — nothing in this race may revoke the family.
+	if refreshRes.status != http.StatusOK {
+		t.Fatalf("refresh during race: %d body=%v", refreshRes.status, refreshRes.body)
+	}
+	winnerRefresh := refreshCookieValue(refreshRes.header)
+	winnerAccess, _ := refreshRes.body["accessToken"].(string)
+	if r := meWithToken(t, ts, winnerAccess); r.status != http.StatusOK {
+		t.Fatalf("winner access after race: %d", r.status)
+	}
+	if r := refreshWithToken(t, ts, winnerRefresh); r.status != http.StatusOK {
+		t.Fatalf("family must stay alive after race: %d", r.status)
+	}
+}
+
+// TestRefreshAccountLimitAccumulatesAcrossRotations: the per-account budget
+// is keyed by the stable owner id, so consecutive refreshes with different
+// rotated tokens still count toward one account limit.
+func TestRefreshAccountLimitAccumulatesAcrossRotations(t *testing.T) {
+	ts := newTestServer(t, withRateLimit(1000), withAccountRateLimit(3))
+	freezeRateClock(ts)
+	client := newJarClient(t)
+	email := uniqueEmail()
+	_, _, token := registerAndLogin(t, ts, client, email)
+
+	for i := 1; i <= 3; i++ {
+		r := refreshWithToken(t, ts, token)
+		if r.status != http.StatusOK {
+			t.Fatalf("refresh %d: %d", i, r.status)
+		}
+		token = refreshCookieValue(r.header)
+	}
+	// 4th refresh (yet another fresh token, same account): account limit.
+	r := refreshWithToken(t, ts, token)
+	if r.status != http.StatusTooManyRequests || r.errCode() != "rate_limited" {
+		t.Fatalf("4th refresh: %d code=%s (want 429)", r.status, r.errCode())
+	}
+	// Unknown tokens do not consume or hit the account budget (IP-only).
+	r = refreshWithToken(t, ts, "unknown-token-value")
+	if r.status != http.StatusUnauthorized {
+		t.Fatalf("unknown refresh: %d (want 401, not rate limited)", r.status)
+	}
+}
+
+// TestRedisKeyMissRecoversFromLedger: a healthy Redis that lost its cache
+// entry (eviction/restart) must not lock users out — the PostgreSQL ledger
+// re-validates the session and the cache self-heals. A real Redis outage
+// still fails closed (see TestRedisOutageFailsClosedProtectedButNotPublic).
+func TestRedisKeyMissRecoversFromLedger(t *testing.T) {
+	ts := newTestServer(t)
+	client := newJarClient(t)
+	email := uniqueEmail()
+	_, access, refresh := registerAndLogin(t, ts, client, email)
+
+	// Simulate cache eviction: drop the Redis key, leave PostgreSQL intact.
+	sum := sha256.Sum256([]byte(refresh))
+	tokenHash := hex.EncodeToString(sum[:])
+	var familyID string
+	if err := testPool.QueryRow(t.Context(),
+		`SELECT refresh_family_id::text FROM auth_sessions WHERE refresh_token_hash = $1`, tokenHash,
+	).Scan(&familyID); err != nil {
+		t.Fatalf("find family: %v", err)
+	}
+	if err := testRedis.Del(t.Context(), "wbb:sess:"+familyID).Err(); err != nil {
+		t.Fatalf("evict cache: %v", err)
+	}
+
+	// Protected API: ledger-valid session works and the cache repopulates.
+	if r := meWithToken(t, ts, access); r.status != http.StatusOK {
+		t.Fatalf("me after cache eviction: %d (want 200, ledger must authorize)", r.status)
+	}
+	// Refresh also recovers instead of revoking the family.
+	r := refreshWithToken(t, ts, refresh)
+	if r.status != http.StatusOK {
+		t.Fatalf("refresh after cache eviction: %d body=%v (want 200)", r.status, r.body)
+	}
+	newAccess, _ := r.body["accessToken"].(string)
+	if r2 := meWithToken(t, ts, newAccess); r2.status != http.StatusOK {
+		t.Fatalf("me with rotated token: %d", r2.status)
+	}
+	// Rotation consumed the old session: the pre-eviction access token dies.
+	if r2 := meWithToken(t, ts, access); r2.status != http.StatusUnauthorized {
+		t.Fatalf("old access after rotation: %d (want 401)", r2.status)
+	}
+}
+
+// TestAccountRateLimit: per-account limiting applies across IPs (IP limit
+// raised high so only the account counter triggers).
+func TestAccountRateLimit(t *testing.T) {
+	ts := newTestServer(t, withRateLimit(1000), withAccountRateLimit(3))
+	freezeRateClock(ts)
+	client := newJarClient(t)
+	limited := uniqueEmail()
+	other := uniqueEmail()
+	registerUser(t, ts, client, limited)
+	registerUser(t, ts, client, other)
+
+	for i := 1; i <= 3; i++ {
+		r := do(t, client, "POST", ts.URL+"/api/v1/auth/login",
+			map[string]any{"email": limited, "password": testPassword}, "")
+		if r.status != http.StatusOK {
+			t.Fatalf("login %d for %s: %d", i, limited, r.status)
+		}
+	}
+	// 4th attempt for the same account is limited even from a fresh IP budget.
+	r := do(t, client, "POST", ts.URL+"/api/v1/auth/login",
+		map[string]any{"email": limited, "password": testPassword}, "")
+	if r.status != http.StatusTooManyRequests || r.errCode() != "rate_limited" {
+		t.Fatalf("same-account 4th login: %d code=%s (want 429 rate_limited)", r.status, r.errCode())
+	}
+	// A different account from the same IP is unaffected.
+	r = do(t, client, "POST", ts.URL+"/api/v1/auth/login",
+		map[string]any{"email": other, "password": testPassword}, "")
+	if r.status != http.StatusOK {
+		t.Fatalf("other account login: %d", r.status)
+	}
+}
+
+// TestPasswordLengthCountsRunes: 12 Korean characters are 36 bytes but only
+// 12 runes — the limit is characters, not bytes.
+func TestPasswordLengthCountsRunes(t *testing.T) {
+	ts := newTestServer(t)
+	client := newJarClient(t)
+
+	// 4 Korean runes = 12 bytes: must fail the 12-character minimum.
+	r := do(t, client, "POST", ts.URL+"/api/v1/auth/register", map[string]any{
+		"email": uniqueEmail(), "password": "비밀번호", "displayName": "A",
+	}, "")
+	if r.status != http.StatusBadRequest || r.errCode() != "invalid_input" {
+		t.Fatalf("4-rune password: status=%d code=%s (want 400)", r.status, r.errCode())
+	}
+
+	// 12 Korean runes (36 bytes): valid.
+	r = do(t, client, "POST", ts.URL+"/api/v1/auth/register", map[string]any{
+		"email": uniqueEmail(), "password": "열두글자비밀번호만들기요", "displayName": "A",
+	}, "")
+	if r.status != http.StatusCreated {
+		t.Fatalf("12-rune password: status=%d (want 201)", r.status)
+	}
+}
+
 // TestRedisOutageFailsClosedProtectedButNotPublic: with Redis unreachable,
 // protected APIs answer 503 while anonymous reads keep working.
 func TestRedisOutageFailsClosedProtectedButNotPublic(t *testing.T) {
@@ -449,6 +700,7 @@ func TestRedisOutageFailsClosedProtectedButNotPublic(t *testing.T) {
 
 func TestRateLimitOnLogin(t *testing.T) {
 	ts := newTestServer(t, withRateLimit(3))
+	freezeRateClock(ts)
 	client := newJarClient(t)
 	email := uniqueEmail()
 	registerUser(t, ts, client, email) // register kind is separate

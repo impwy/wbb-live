@@ -167,7 +167,8 @@ var errRateLimited = errors.New("rate limited")
 func (s *Server) rateLimit(kind string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.RateLimitRequests > 0 {
-			ok, retryAfter, err := checkRateLimit(r.Context(), s.redis, kind, clientIP(r), s.cfg.RateLimitRequests, s.cfg.RateLimitWindow)
+			ok, retryAfter, err := checkRateLimit(r.Context(), s.redis, kind, clientIP(r),
+				s.cfg.RateLimitRequests, s.cfg.RateLimitWindow, s.rateLimitClock())
 			if err != nil {
 				writeError(w, r, http.StatusServiceUnavailable, "session_store_unavailable", "The session store is temporarily unavailable.")
 				return
@@ -182,6 +183,29 @@ func (s *Server) rateLimit(kind string, next http.HandlerFunc) http.HandlerFunc 
 	}
 }
 
+// enforceAccountLimit applies the per-account fixed window (in addition to
+// the per-IP middleware) for sensitive auth endpoints. accountKey is the
+// normalized email for register/login and the token hash for refresh, so
+// distributed-IP attempts against one account are also capped. Redis
+// outages fail closed.
+func (s *Server) enforceAccountLimit(w http.ResponseWriter, r *http.Request, kind, accountKey string) bool {
+	if s.cfg.RateLimitAccountRequests <= 0 || accountKey == "" {
+		return true
+	}
+	ok, retryAfter, err := checkRateLimit(r.Context(), s.redis, kind+"-account", accountKey,
+		s.cfg.RateLimitAccountRequests, s.cfg.RateLimitWindow, s.rateLimitClock())
+	if err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "session_store_unavailable", "The session store is temporarily unavailable.")
+		return false
+	}
+	if !ok {
+		w.Header().Set("Retry-After", retryAfter)
+		writeDomainError(w, r, errRateLimited)
+		return false
+	}
+	return true
+}
+
 func clientIP(r *http.Request) string {
 	// No trusted proxy chain in front of the API in dev; when deployed behind
 	// Caddy, replace this with trusted X-Forwarded-For handling.
@@ -192,20 +216,20 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func checkRateLimit(ctx context.Context, rdb redis.UniversalClient, kind, ip string, limit int64, window time.Duration) (bool, string, error) {
-	now := time.Now().Unix()
+func checkRateLimit(ctx context.Context, rdb redis.UniversalClient, kind, ip string, limit int64, window time.Duration, now time.Time) (bool, string, error) {
+	nowSec := now.Unix()
 	windowSec := int64(window.Seconds())
-	idx := now / windowSec
+	idx := nowSec / windowSec
 	key := "wbb:rl:" + kind + ":" + ip + ":" + itoa(idx)
 	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return false, "", err
 	}
 	if count == 1 {
-		rdb.Expire(ctx, key, time.Duration((idx+1)*windowSec-now)*time.Second+time.Second)
+		rdb.Expire(ctx, key, time.Duration((idx+1)*windowSec-nowSec)*time.Second+time.Second)
 	}
 	if count > limit {
-		retry := time.Duration((idx+1)*windowSec-now) * time.Second
+		retry := time.Duration((idx+1)*windowSec-nowSec) * time.Second
 		return false, retry.Truncate(time.Second).String(), nil
 	}
 	return true, "", nil

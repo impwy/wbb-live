@@ -76,10 +76,10 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 | GET /auth/google/start | 고정 callback만 허용 | 302 Google 인증 |
 | GET /auth/google/callback | code,state 검증 | 303 고정 웹 경로 |
 | GET /broadcasts | 공개, cursor,limit; status=live/all | 200 {items,nextCursor} |
-| POST /broadcasts | 로그인, title,description | 201 방송 객체 |
-| GET /broadcasts/{id} | 공개 | 200 방송 객체 |
-| PATCH /broadcasts/{id} | 소유자, version,title/description | 200 갱신 객체 |
-| DELETE /broadcasts/{id} | 소유자, version | 204; 활성 회차 있으면409 |
+| POST /broadcasts | 로그인, title,description | 201 {broadcast: 방송 객체} |
+| GET /broadcasts/{id} | 공개 | 200 {broadcast: 방송 객체} |
+| PATCH /broadcasts/{id} | 소유자, version,title/description | 200 {broadcast: 갱신 객체} |
+| DELETE /broadcasts/{id} | 소유자, query version | 204; 활성 회차 있으면409 |
 | POST /broadcasts/{id}/sessions | 소유자, source=screen/camera, Idempotency-Key | 202 회차 객체 및 publish grant |
 | GET /broadcasts/{id}/sessions/current | 공개, 민감 정보 제외 | 200 현재/최근 회차 또는 null |
 | POST /broadcasts/{id}/sessions/{sid}/stop | 소유자 | 202 STOPPING, 이미 ENDED면200 |
@@ -90,7 +90,7 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 | GET /broadcasts/{id}/playback | 공개 | LIVE면200 {sessionId,masterUrl}; 미송출409 |
 | POST /playback-events | 공개, 크기/빈도/필드 제한 | 202 집계용 이벤트 수락 |
 
-방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 회차와 grant는 소유자에게만 보내고 캐시하지 않는다.
+방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 외부 JSON 상태값은 `ready`, `starting`, `live`, `stopping`, `ended`로 소문자 직렬화한다. 도메인 상태표의 대문자와 의미는 같다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 회차와 grant는 소유자에게만 보내고 캐시하지 않는다.
 
 Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저장한다. 같은 키/같은 입력은 동일 회차로 응답하고, 같은 키/다른 입력은409다. 다른 키로 활성 회차를 중복 시작해도409다. 이미 송출 중인 회차에 새 publish grant를 발급해 두 번째 송출자가 기존 연결을 탈취하게 하지 않는다. grant가 만료된 STARTING 회차만 갱신할 수 있다.
 

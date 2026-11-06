@@ -323,6 +323,35 @@ func TestPersistenceAcrossServerRestart(t *testing.T) {
 	}
 }
 
+// TestUpdateNormalizesBeforeStoring: titles are trimmed once and the trimmed
+// value is both validated and stored (regression: padding used to survive).
+func TestUpdateNormalizesBeforeStoring(t *testing.T) {
+	ts := newTestServer(t)
+	client := newJarClient(t)
+	_, access, _ := registerAndLogin(t, ts, client, uniqueEmail())
+	created := createBroadcast(t, ts, access, "원제목")
+	id := created["id"].(string)
+
+	// 100 runes + surrounding spaces: valid after trim, stored trimmed.
+	padded := "  " + strings.Repeat("방", 100) + "  "
+	r := do(t, client, "PATCH", ts.URL+"/api/v1/broadcasts/"+id,
+		map[string]any{"version": 1, "title": padded}, access)
+	if r.status != http.StatusOK {
+		t.Fatalf("padded title: %d body=%v", r.status, r.body)
+	}
+	title := r.body["broadcast"].(map[string]any)["title"].(string)
+	if len([]rune(title)) != 100 || strings.TrimSpace(title) != title {
+		t.Fatalf("stored title must be the trimmed 100-rune value, got %d runes", len([]rune(title)))
+	}
+
+	// 101 runes even after trim: rejected.
+	r = do(t, client, "PATCH", ts.URL+"/api/v1/broadcasts/"+id,
+		map[string]any{"version": 2, "title": strings.Repeat("가", 101)}, access)
+	if r.status != http.StatusBadRequest {
+		t.Fatalf("101-rune title: %d (want 400)", r.status)
+	}
+}
+
 func listContains(items []any, id string) bool {
 	for _, it := range items {
 		if m, ok := it.(map[string]any); ok && m["id"] == id {

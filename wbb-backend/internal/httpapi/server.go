@@ -29,14 +29,21 @@ type Server struct {
 	redis      redis.UniversalClient
 	db         *pgxpool.Pool
 	log        *slog.Logger
+
+	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
+	// production uses time.Now.
+	rateLimitClock func() time.Time
 }
 
 func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Service, rdb redis.UniversalClient, dbPool *pgxpool.Pool, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now}
 }
+
+// SetRateLimitClock pins the rate-limit window clock (tests only).
+func (s *Server) SetRateLimitClock(now func() time.Time) { s.rateLimitClock = now }
 
 const maxBodyBytes = 64 << 10 // 64 KiB request body cap (docs/design.md §5)
 

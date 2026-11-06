@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
@@ -38,6 +39,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &req); err != nil {
 		return
 	}
+	if !s.enforceAccountLimit(w, r, "register", strings.ToLower(strings.TrimSpace(req.Email))) {
+		return
+	}
 	user, err := s.auth.Register(r.Context(), req.Email, req.Password, req.DisplayName)
 	if err != nil {
 		writeDomainError(w, r, err)
@@ -52,6 +56,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &req); err != nil {
 		return
 	}
+	if !s.enforceAccountLimit(w, r, "login", strings.ToLower(strings.TrimSpace(req.Email))) {
+		return
+	}
 	user, session, err := s.auth.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		writeDomainError(w, r, err)
@@ -62,10 +69,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRefresh: POST /api/v1/auth/refresh (HttpOnly cookie) → rotated tokens.
+// Per-account limiting uses the stable owner id resolved from the ledger so
+// the budget accumulates across rotations; unknown tokens rely on the IP
+// limit only.
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	token, err := refreshCookie(r)
 	if err != nil {
 		writeDomainError(w, r, err)
+		return
+	}
+	owner, err := s.auth.SessionOwner(r.Context(), token)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	if owner != "" && !s.enforceAccountLimit(w, r, "refresh", owner) {
 		return
 	}
 	user, session, err := s.auth.Refresh(r.Context(), token)

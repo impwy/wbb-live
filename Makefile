@@ -43,6 +43,7 @@ run-backend: deps-up
 	cd wbb-backend && WBB_ENV=dev \
 		WBB_DATABASE_URL=postgres://wbb:wbb-dev-password@127.0.0.1:55432/wbb \
 		WBB_REDIS_ADDR=127.0.0.1:56379 \
+		WBB_CORS_ORIGINS=http://localhost:8080,http://localhost:3000 \
 		go run ./cmd/wbb-api
 
 frontend-get:
@@ -55,7 +56,7 @@ frontend-test: frontend-get
 	cd wbb-frontend && $(FLUTTER) test
 
 frontend-build: frontend-get
-	cd wbb-frontend && $(FLUTTER) build web --release
+	cd wbb-frontend && $(FLUTTER) build web --release --no-web-resources-cdn
 
 frontend-run: frontend-get
 	cd wbb-frontend && $(FLUTTER) run -d web-server --web-port 3000 \

@@ -28,7 +28,10 @@ type Config struct {
 	StaticDir   string
 
 	RateLimitRequests int64
-	RateLimitWindow   time.Duration
+	// Per-account limit for register/login/refresh in addition to the per-IP
+	// limit, so distributed-IP attempts against one account are also capped.
+	RateLimitAccountRequests int64
+	RateLimitWindow          time.Duration
 
 	ephemeralSecret bool
 }
@@ -43,8 +46,10 @@ func Load() (Config, error) {
 		AccessTokenTTL:    10 * time.Minute,
 		RefreshTokenTTL:   7 * 24 * time.Hour,
 		RateLimitRequests: 30,
-		RateLimitWindow:   time.Minute,
-		StaticDir:         os.Getenv("WBB_STATIC_DIR"),
+		// Per-account default: tighter than the IP limit.
+		RateLimitAccountRequests: 10,
+		RateLimitWindow:          time.Minute,
+		StaticDir:                os.Getenv("WBB_STATIC_DIR"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")
@@ -77,6 +82,13 @@ func Load() (Config, error) {
 			return cfg, errors.New("WBB_RATE_LIMIT_REQUESTS must be a positive integer")
 		}
 		cfg.RateLimitRequests = n
+	}
+	if raw := os.Getenv("WBB_RATE_LIMIT_ACCOUNT_REQUESTS"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 1 {
+			return cfg, errors.New("WBB_RATE_LIMIT_ACCOUNT_REQUESTS must be a positive integer")
+		}
+		cfg.RateLimitAccountRequests = n
 	}
 	if cfg.RateLimitWindow, err = durationOr("WBB_RATE_LIMIT_WINDOW", cfg.RateLimitWindow); err != nil {
 		return cfg, err

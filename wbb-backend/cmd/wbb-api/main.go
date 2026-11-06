@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 	if cfg.EphemeralSecret() {
-		log.Warn("WBB_JWT_SECRET not set; generated an ephemeral secret (dev only). Tokens and sessions do not survive restarts.")
+		log.Warn("WBB_JWT_SECRET not set; generated an ephemeral secret (dev only). Existing access tokens become invalid; refresh sessions can restore access.")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

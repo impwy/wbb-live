@@ -27,6 +27,7 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -116,7 +117,10 @@ func validateRegistration(email, password, displayName string) error {
 	if err := validateEmail(email); err != nil {
 		return err
 	}
-	if len(password) < minPasswordLen || len(password) > maxPasswordLen {
+	// The password limit counts characters (runes), not bytes: a 12-byte
+	// 4-character Korean password is 4 characters, not 12.
+	pwLen := utf8.RuneCountInString(password)
+	if pwLen < minPasswordLen || pwLen > maxPasswordLen {
 		return &InvalidInputError{Field: "password", Reason: fmt.Sprintf("must be %d to %d characters", minPasswordLen, maxPasswordLen)}
 	}
 	if displayName == "" {
@@ -274,15 +278,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (User, Sessi
 		return User{}, Session{}, ErrUnauthorized
 	}
 
-	// Cache gate (fail closed on Redis errors). The ledger re-check below is
-	// authoritative even if this cache is stale.
-	active, err := s.activeSession(ctx, familyID)
-	if err != nil {
+	// Fail closed on Redis outages. The cached value itself is advisory
+	// only: the family-locked transaction below re-verifies the ledger and is
+	// the sole revocation authority, so a stale or missing entry can never
+	// revoke (or revive) a family by itself.
+	if _, _, err := s.cachedSession(ctx, familyID); err != nil {
 		return User{}, Session{}, err
-	}
-	if active != sessID {
-		_ = s.revokeFamily(ctx, familyID, "stale-cache")
-		return User{}, Session{}, ErrSessionRevoked
 	}
 
 	newRefresh, err := newRefreshToken()
@@ -404,14 +405,19 @@ func (s *Service) LogoutByAccessToken(ctx context.Context, accessToken string) e
 }
 
 // VerifyRequest authenticates an access JWT for protected APIs. The Redis
-// active-sid cache is consulted first (fail closed on outages) and the
-// PostgreSQL ledger — family revoked_at, session revoked_at and expiry — is
-// the final authority, so revoked sessions can never be revived by a stale
-// or failed cache delete.
+// active-sid cache is consulted first; a miss or a mismatching value on a
+// healthy Redis falls through to the PostgreSQL ledger (family revoked_at,
+// session revoked_at, expiry) and repairs the cache under the family lock
+// without ever overwriting a newer sid. A real Redis outage fails closed
+// with ErrStoreUnavailable. The ledger is always the final authority.
 func (s *Service) VerifyRequest(ctx context.Context, accessToken string) (User, error) {
 	claims, err := s.tokens.VerifyAccess(accessToken)
 	if err != nil {
 		return User{}, ErrUnauthorized
+	}
+	cached, cachedFound, err := s.cachedSession(ctx, claims.FamilyID)
+	if err != nil {
+		return User{}, err // ErrStoreUnavailable fails closed
 	}
 	var (
 		userID, email, display string
@@ -437,14 +443,89 @@ func (s *Service) VerifyRequest(ctx context.Context, accessToken string) (User, 
 		s.now().After(sessionExpires) || userID != claims.Subject {
 		return User{}, ErrUnauthorized
 	}
-	active, err := s.activeSession(ctx, claims.FamilyID)
-	if err != nil {
-		return User{}, err
-	}
-	if active != claims.SessionID {
-		return User{}, ErrUnauthorized
+	if !cachedFound || cached != claims.SessionID {
+		// Cache miss (eviction/restart) or a stale value: repair it under the
+		// family lock so a concurrent rotation can never be overwritten by an
+		// older sid. Ledger-invalid sessions are rejected without touching the
+		// cache; a failed cache write fails closed (503).
+		if err := s.recoverSessionCache(ctx, claims); err != nil {
+			return User{}, err
+		}
 	}
 	return User{ID: userID, Email: email, DisplayName: display}, nil
+}
+
+// recoverSessionCache repopulates the active-sid cache while holding the
+// family row lock (the same lock rotation, logout and reuse revocation
+// take). It re-verifies that claims.SessionID is still the family's live
+// session before writing, so:
+//   - a rotation that already committed leaves the newer sid untouched
+//     (our sid is revoked → ErrUnauthorized, no write);
+//   - a rotation waiting on the lock runs afterwards and overwrites us;
+//   - cache write failures fail closed with ErrStoreUnavailable.
+func (s *Service) recoverSessionCache(ctx context.Context, claims *AccessClaims) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var familyRevokedAt *time.Time
+	err = tx.QueryRow(ctx,
+		`SELECT revoked_at FROM auth_session_families WHERE id = $1 FOR UPDATE`, claims.FamilyID,
+	).Scan(&familyRevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+	if familyRevokedAt != nil {
+		return ErrUnauthorized
+	}
+
+	var liveID string
+	var expires time.Time
+	err = tx.QueryRow(ctx,
+		`SELECT id::text, expires_at FROM auth_sessions
+		 WHERE refresh_family_id = $1 AND revoked_at IS NULL
+		 ORDER BY created_at DESC LIMIT 1`,
+		claims.FamilyID,
+	).Scan(&liveID, &expires)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+	if liveID != claims.SessionID || s.now().After(expires) {
+		return ErrUnauthorized // rotated away or expired: never overwrite
+	}
+	if err := s.cacheActiveSession(ctx, claims.FamilyID, claims.SessionID, time.Until(expires)); err != nil {
+		return err // ErrStoreUnavailable → 503
+	}
+	return tx.Commit(ctx)
+}
+
+// SessionOwner resolves the user owning the session family of a refresh
+// token (by hash). Returns "" for unknown tokens. Used for per-account rate
+// limiting so the budget accumulates across rotations and families.
+func (s *Service) SessionOwner(ctx context.Context, refreshToken string) (string, error) {
+	if refreshToken == "" {
+		return "", nil
+	}
+	var userID string
+	err := s.db.QueryRow(ctx,
+		`SELECT user_id::text FROM auth_sessions WHERE refresh_token_hash = $1`,
+		hashToken(refreshToken),
+	).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
 }
 
 // UserByID loads the public user shape.
@@ -462,17 +543,18 @@ func (s *Service) UserByID(ctx context.Context, id string) (User, error) {
 	return u, nil
 }
 
-// activeSession returns the cached active sid for a family. A Redis outage
-// is ErrStoreUnavailable (fail closed); a missing key is ErrUnauthorized.
-func (s *Service) activeSession(ctx context.Context, familyID string) (string, error) {
+// cachedSession returns the cached active sid for a family.
+//   - found=false, err=nil: healthy Redis, key missing (eviction/restart)
+//   - err=ErrStoreUnavailable: real Redis outage, callers fail closed
+func (s *Service) cachedSession(ctx context.Context, familyID string) (sid string, found bool, err error) {
 	val, err := s.rdb.Get(ctx, sessionKey(familyID)).Result()
 	if errors.Is(err, redis.Nil) {
-		return "", ErrUnauthorized
+		return "", false, nil
 	}
 	if err != nil {
-		return "", ErrStoreUnavailable
+		return "", false, ErrStoreUnavailable
 	}
-	return val, nil
+	return val, true, nil
 }
 
 func (s *Service) cacheActiveSession(ctx context.Context, familyID, sessionID string, ttl time.Duration) error {

@@ -197,15 +197,20 @@ func (s *Service) Update(ctx context.Context, actorID, id string, version int64,
 	if title == nil && description == nil {
 		return Broadcast{}, &InvalidInputError{Field: "body", Reason: "title or description is required"}
 	}
+	// Normalize once, then validate and store the same trimmed value.
 	if title != nil {
-		if err := validateTitle(strings.TrimSpace(*title)); err != nil {
+		t := strings.TrimSpace(*title)
+		if err := validateTitle(t); err != nil {
 			return Broadcast{}, err
 		}
+		title = &t
 	}
 	if description != nil {
-		if err := validateDescription(strings.TrimSpace(*description)); err != nil {
+		d := strings.TrimSpace(*description)
+		if err := validateDescription(d); err != nil {
 			return Broadcast{}, err
 		}
+		description = &d
 	}
 
 	if err := s.checkOwner(ctx, actorID, id, &version); err != nil {

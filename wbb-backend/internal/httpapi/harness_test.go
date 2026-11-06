@@ -144,6 +144,7 @@ func redactPGError(err error) error {
 type testServer struct {
 	*httptest.Server
 	cfg config.Config
+	api *httpapi.Server
 }
 
 type serverOpt func(*config.Config)
@@ -162,6 +163,10 @@ func withBadRedis() serverOpt {
 
 func withRateLimit(requests int64) serverOpt {
 	return func(c *config.Config) { c.RateLimitRequests = requests; c.RateLimitWindow = time.Minute }
+}
+
+func withAccountRateLimit(requests int64) serverOpt {
+	return func(c *config.Config) { c.RateLimitAccountRequests = requests; c.RateLimitWindow = time.Minute }
 }
 
 func withCORSOrigins(origins ...string) serverOpt {
@@ -204,6 +209,19 @@ func newTestServer(t *testing.T, opts ...serverOpt) *testServer {
 		t.Cleanup(func() { _ = rdb.Close() })
 	}
 
+	// Reset rate-limit counters so tests with different limits don't share
+	// windows (session keys under wbb:sess:* are untouched).
+	scanCtx, scanCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	iter := testRedis.Scan(scanCtx, 0, "wbb:rl:*", 100).Iterator()
+	var rlKeys []string
+	for iter.Next(scanCtx) {
+		rlKeys = append(rlKeys, iter.Val())
+	}
+	if len(rlKeys) > 0 {
+		testRedis.Del(scanCtx, rlKeys...)
+	}
+	scanCancel()
+
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	authSvc := auth.NewService(testPool, rdb, tokens, cfg.RefreshTokenTTL)
 	bcastSvc := broadcasts.NewService(testPool)
@@ -212,7 +230,15 @@ func newTestServer(t *testing.T, opts ...serverOpt) *testServer {
 	ts.Listener = listener
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return &testServer{Server: ts, cfg: cfg}
+	return &testServer{Server: ts, cfg: cfg, api: api}
+}
+
+// freezeRateClock pins the rate-limit window clock mid-window so fixed-window
+// bucket boundaries cannot flake assertions.
+func freezeRateClock(ts *testServer) {
+	ts.api.SetRateLimitClock(func() time.Time {
+		return time.Date(2026, 11, 6, 12, 0, 30, 0, time.UTC)
+	})
 }
 
 func envOr(key, fallback string) string {

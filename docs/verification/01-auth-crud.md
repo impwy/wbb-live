@@ -22,6 +22,8 @@
 
 API 검사는 비로그인401·다른 소유자403·없는 방송404·version409, refresh 회전·동시 재사용, 로그아웃, 캐시 유실·복구·회전 경합, Redis 장애503와 익명 조회, 계정/IP 제한, 문자 수·입력 정규화, 페이지네이션을 포함한다.
 
+공개 커밋 `cf058cf`의 [GitHub Actions 실행](https://github.com/impwy/wbb-live/actions/runs/42190069816)에서 backend와 frontend 작업이 모두 성공했다. 원격 CI에서도 Go 검사·취약점 검사 및 Flutter analyze/test/web build가 통과했다.
+
 ## 직접 수행한 흐름
 
 1. 브라우저 가입→로그인→내 방송 등록→수정→새로고침→로그인 상태 복원→상세 조회→삭제→로그아웃.

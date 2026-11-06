@@ -37,6 +37,7 @@ API/worker/media/infra ─ OTel·Alloy ─ Loki·Tempo·Mimir ─ Grafana
 | --- | --- |
 | users | id, 정규화 이메일, 표시 이름, nullable password_hash, 생성 시각. 로컬 이메일 중복 거절 |
 | auth_identities | user_id, provider, issuer, subject. `(provider, issuer, subject)` 유일 |
+| auth_session_families | id, user_id, revoked_at. 회전·로그아웃·재사용 탐지가 같은 행 잠금을 사용하며 계열 전체의 폐기를 판정 |
 | auth_sessions | id, user_id, refresh_token_hash, refresh_family_id, expires_at, revoked_at, rotation 정보. 원문 토큰 저장 금지 |
 | broadcasts | id, owner_id, title(1~100자), description(0~2000자), version, created_at, updated_at, deleted_at |
 | broadcast_sessions | id, broadcast_id, publisher_auth_session_id, state, version, media_generation, 시작/종료/heartbeat 시각, end_reason, ingest_connection_id, worker_lease_until |
@@ -52,7 +53,7 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 - 이메일 가입에는 검증된 Argon2id 구현을 사용한다. 길이 제한과 비용은 벤치마크 후 설정하고 비밀번호를 로그에 남기지 않는다. 비밀번호 12~128자, 이메일 최대254자, 표시 이름1~40자로 제한한다. 비밀번호를 잘라 저장하지 않는다.
 - 자체 access JWT는 10분, 회전 refresh token은 최대7일을 초기 설정으로 한다. JWT는 고정 허용 알고리즘·issuer·audience(`wbb-api`)·exp·sub·sid를 검사한다. JWT의 권한 정보만 믿지 않고 모든 인증 API에서 활성 `auth_sessions`를 확인한다. 따라서 로그아웃 후 기존 access JWT도 거절한다. 공개 목록/시청에는 이 검사가 필요 없다.
 - access JWT는 브라우저 메모리에만 저장한다. refresh는 동일 출처 `Secure; HttpOnly; SameSite=Lax; Path=/api/v1/auth` 쿠키로 전달한다. localStorage에 토큰을 저장하지 않는다. register/login/refresh/logout은 POST와 정확한 Origin 검증을 적용한다. cross-origin API 사용은 기본 거절한다.
-- refresh는 DB 트랜잭션으로 회전한다. 소비한 토큰 재사용 시 해당 family를 폐기한다. Flutter는 refresh single-flight를 사용한다. 다중 탭 간에도 갱신을 직렬화하거나 세션 재로그인을 안내하며 이전 토큰을 무제한 허용하는 방식으로 경쟁을 숨기지 않는다.
+- refresh는 DB 트랜잭션으로 회전한다. 회전·로그아웃·재사용 탐지는 같은 family 행 잠금으로 직렬화한다. 소비한 토큰 재사용은 동시 요청으로 발견된 경우에도 해당 family를 폐기하고 커밋한다. 보호 API는 family와 개별 session의 폐기를 모두 확인한다. Flutter는 refresh single-flight를 사용한다. 다중 탭 간에도 갱신을 직렬화하거나 세션 재로그인을 안내하며 이전 토큰을 무제한 허용하는 방식으로 경쟁을 숨기지 않는다.
 - Google은 Authorization Code + PKCE, state, nonce, 허용된 redirect URI와 서버 측 토큰 교환을 사용한다. issuer/audience/expiry/nonce 및 provider subject를 검증한다. ID token은 Google JWKS 검증 라이브러리를 사용한다. 이메일이 같다는 이유만으로 기존 로컬 계정에 자동 연결하지 않는다. 충돌 시 기존 로그인 방법을 안내하며 계정 연결 기능은 후속 범위다.
 - OAuth callback은 access token을 URL로 내보내지 않는다. 서버가 refresh 쿠키를 설정하고 고정된 프런트엔드 경로로 이동한 뒤 refresh API로 access token을 받는다. 인증 code/state/토큰이 Caddy·API 로그에 남지 않게 해당 경로의 query를 제거한다.
 - 서버가 JWT subject에서 방송 owner를 결정한다. 요청의 ownerId는 받지 않는다. 수정·삭제·시작·종료·송출 인증마다 DB owner를 검사한다. anonymous401, 다른 사용자403, 없는/삭제된 방송404, 충돌409다.

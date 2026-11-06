@@ -1,0 +1,104 @@
+// Package httpapi exposes the WBB public HTTP API under /api/v1 and maps
+// module errors onto the documented error envelope. Handlers stay thin: all
+// behaviour lives in the auth and broadcasts modules behind this seam.
+package httpapi
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
+	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
+	"github.com/impwy/wbb-live/wbb-backend/internal/config"
+	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
+)
+
+// Server wires modules into HTTP routes.
+type Server struct {
+	cfg        config.Config
+	auth       *auth.Service
+	broadcasts *broadcasts.Service
+	redis      redis.UniversalClient
+	db         *pgxpool.Pool
+	log        *slog.Logger
+}
+
+func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Service, rdb redis.UniversalClient, dbPool *pgxpool.Pool, log *slog.Logger) *Server {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log}
+}
+
+const maxBodyBytes = 64 << 10 // 64 KiB request body cap (docs/design.md §5)
+
+// Handler returns the fully middleware-chained HTTP handler.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/v1/health/live", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
+	})
+	mux.HandleFunc("GET /api/v1/health/ready", s.handleReady)
+
+	mux.HandleFunc("POST /api/v1/auth/register", s.rateLimit("register", requireOrigin(s, s.handleRegister)))
+	mux.HandleFunc("POST /api/v1/auth/login", s.rateLimit("login", requireOrigin(s, s.handleLogin)))
+	mux.HandleFunc("POST /api/v1/auth/refresh", s.rateLimit("refresh", requireOrigin(s, s.handleRefresh)))
+	mux.HandleFunc("POST /api/v1/auth/logout", requireOrigin(s, s.handleLogout))
+	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+
+	mux.HandleFunc("GET /api/v1/broadcasts", s.handleListBroadcasts)
+	mux.HandleFunc("POST /api/v1/broadcasts", s.requireAuth(s.handleCreateBroadcast))
+	mux.HandleFunc("GET /api/v1/broadcasts/{id}", s.handleGetBroadcast)
+	mux.HandleFunc("PATCH /api/v1/broadcasts/{id}", s.requireAuth(s.handleUpdateBroadcast))
+	mux.HandleFunc("DELETE /api/v1/broadcasts/{id}", s.requireAuth(s.handleDeleteBroadcast))
+
+	var root http.Handler
+	if s.cfg.StaticDir != "" {
+		root = spaHandler(s.cfg.StaticDir)
+	} else {
+		root = http.NotFoundHandler()
+	}
+	mux.Handle("/", root)
+
+	return s.withRequestID(s.recoverPanic(s.withCORS(mux)))
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.db.Ping(ctx); err != nil {
+		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "Database is not reachable.")
+		return
+	}
+	latest, err := db.LatestApplied(ctx, s.db)
+	if err != nil || latest != db.LatestEmbedded() {
+		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "Migrations are not up to date.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// spaHandler serves the built Flutter Web bundle with an index.html fallback
+// for client-side routes. API paths never reach it.
+func spaHandler(dir string) http.Handler {
+	fs := http.FileServer(http.Dir(dir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if p == "." || p == "" {
+			p = "index.html"
+		}
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			r.URL.Path = "/"
+		}
+		fs.ServeHTTP(w, r)
+	})
+}

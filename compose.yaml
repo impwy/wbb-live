@@ -1,0 +1,50 @@
+# WBB local development stack.
+# Dev-only placeholder credentials; real secrets are injected via environment
+# variables in deployment and never committed.
+name: wbb
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wbb
+      POSTGRES_PASSWORD: wbb-dev-password
+      POSTGRES_DB: wbb
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - wbb-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wbb -d wbb"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./wbb-backend
+    environment:
+      WBB_ENV: dev
+      WBB_DATABASE_URL: postgres://wbb:wbb-dev-password@postgres:5432/wbb
+      WBB_REDIS_ADDR: redis:6379
+      # Exact allowed browser origins for auth POSTs (register/login/refresh/logout).
+      WBB_CORS_ORIGINS: http://localhost:8080,http://localhost:3000
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  wbb-postgres-data:

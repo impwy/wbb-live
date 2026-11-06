@@ -1,0 +1,21 @@
+# Secrets and environment files (never commit real values)
+.env
+.env.*
+!.env.example
+
+# Go build outputs
+wbb-backend/bin/
+wbb-backend/wbb-api
+
+# Flutter / Dart
+wbb-frontend/.dart_tool/
+wbb-frontend/.flutter-plugins
+wbb-frontend/.flutter-plugins-dependencies
+wbb-frontend/.packages
+wbb-frontend/build/
+wbb-frontend/.pub-cache/
+wbb-frontend/coverage/
+
+# OS / editor noise
+.DS_Store
+*.log

@@ -11,7 +11,7 @@
 // dimension checks vs source, DELETE teardown with OBSERVED cleanup, MediaMTX
 // webrtcsession disappearance, start-stop-start, and late-response races.
 import { chromium } from 'playwright';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const results = [];
@@ -27,6 +27,48 @@ function skip(name, detail = '') {
 const BASE = 'http://127.0.0.1:8090';
 const WHIP_FILTER = '**/spike/source/whip*';
 const spikeDir = new URL('.', import.meta.url).pathname;
+
+// --- transcoder evidence helpers -------------------------------------------
+// The transcoder container restarts ffmpeg in a retry loop, so identity is
+// (container ID + PID + /proc starttime): the ORIGINAL encoder must vanish;
+// a NEW retry instance with a different starttime is allowed.
+// NOTE: execFileSync with an argv array — never a host-shell string — so
+// shell metacharacters like awk '{print $22}' reach the container intact.
+function execIn(container, cmd) {
+  return execFileSync('docker', ['compose', 'exec', '-T', container, 'sh', '-c', cmd], {
+    cwd: spikeDir, encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+function transcoderContainerId() {
+  return execFileSync('docker', ['compose', 'ps', '-q', 'transcoder'], {
+    cwd: spikeDir, encoding: 'utf8',
+  }).trim();
+}
+// Returns { pid: null } when no ffmpeg is running (distinct from a query
+// error) or { pid, starttime } with a validated positive numeric starttime,
+// or { pid, error } when the identity could not be established.
+function ffmpegIdentity() {
+  let out;
+  try {
+    out = execIn('transcoder', 'pidof ffmpeg 2>/dev/null || true');
+  } catch (e) {
+    return { pid: null, error: `pidof failed: ${String(e).slice(0, 120)}` };
+  }
+  const pid = out.split(/\s+/)[0];
+  if (!pid) return { pid: null };
+  let raw;
+  try {
+    raw = execIn('transcoder', `cat /proc/${pid}/stat 2>/dev/null | awk '{print $22}'`);
+  } catch (e) {
+    return { pid, error: `stat failed: ${String(e).slice(0, 120)}` };
+  }
+  const starttime = Number(raw.trim());
+  if (!Number.isFinite(starttime) || starttime <= 0) {
+    return { pid, error: `bad starttime: ${JSON.stringify(raw)}` };
+  }
+  return { pid, starttime };
+}
 
 // --- MediaMTX API (v1.21.3: /v3/webrtcsessions/list, NOT /v3/whipsessions) --
 async function api(path) {
@@ -116,8 +158,26 @@ async function stopAndWait(page) {
 
 // ---------------------------------------------------------------------------
 const browser = await chromium.launch({
+  channel: 'chrome', // bundled Chromium lacks H.264; system Chrome has it
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 });
+
+// Codec preflight: the runner itself must be able to decode H.264/AAC.
+{
+  const p = await browser.newPage();
+  const caps = await p.evaluate(() => ({
+    h264: HTMLVideoElement.prototype.canPlayType.call(document.createElement('video'), 'video/mp4; codecs="avc1.42E01E"'),
+    aac: HTMLVideoElement.prototype.canPlayType.call(document.createElement('video'), 'audio/mp4; codecs="mp4a.40.2"'),
+  }));
+  await p.close();
+  check('codec preflight H.264', caps.h264 !== '', caps.h264 || 'empty');
+  check('codec preflight AAC', caps.aac !== '', caps.aac || 'empty');
+  if (!caps.h264 || !caps.aac) {
+    console.error('시스템 Chrome(channel:chrome)이 H.264/AAC를 지원하지 않음 — 검증 중단');
+    await browser.close().catch(() => {});
+    process.exit(1);
+  }
+}
 
 try {
   // =========================================================================
@@ -127,9 +187,18 @@ try {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     try {
-      await page.goto(`${BASE}/?mode=synth&autostart=1`);
+      // Real CLICK start (not autostart): the user gesture lets the
+      // publisher's AudioContext run, which the synthetic audio verification
+      // depends on.
+      await page.goto(`${BASE}/`);
+      await page.click('#btn-synth');
       await waitForState(page, s => s.lifecycle === 'publishing', 20000, 'publishing');
       await waitForState(page, s => ['connected', 'completed'].includes(s.iceState), 15000, 'ICE connected');
+      // The stats interval samples the publisher AudioContext state once per
+      // second — wait for the sample before asserting it.
+      await waitForState(page, s => s.publisherAC !== undefined && s.publisherAC !== null, 5000, 'publisherAC sampled');
+      check('S1 publisher AudioContext running', (await st(page)).publisherAC === 'running',
+        `state=${(await st(page)).publisherAC}`);
 
       let s = await st(page);
       check('S1 WHIP POST 201', s.whipPost === 201, `status=${s.whipPost}`);
@@ -212,10 +281,14 @@ try {
       const p2 = await page.evaluate(() => window.__playbackProbe());
       check('S1 playback currentTime increasing', p2.currentTime > p1.currentTime && p2.currentTime > 0, `${p1.currentTime.toFixed(2)}→${p2.currentTime.toFixed(2)}`);
       check('S1 decoded frames increasing', p2.frames > p1.frames && p2.frames > 0, `${p1.frames}→${p2.frames}`);
-      if (p2.audioLevel === -1) {
+      // Audio evidence needs an UNMUTED element: muted captureStream is silent.
+      await page.click('#btn-sound');
+      await sleep(1500);
+      const pA = await page.evaluate(() => window.__playbackProbe());
+      if (pA.audioLevel === -1) {
         skip('S1 browser audio level', 'analyser/audio track unavailable');
       } else {
-        check('S1 playback audio non-silent', p2.audioLevel > 0, `level=${p2.audioLevel}`);
+        check('S1 playback audio non-silent', pA.audioLevel > 0, `level=${pA.audioLevel}`);
       }
 
       // Server-side audio non-silence: decode 3s of AAC to PCM and inspect.
@@ -250,6 +323,20 @@ try {
       const ar = Math.abs(v.width / v.height - src.w / src.h);
       check('S1 aspect preserved', ar < 0.05, `Δ=${ar.toFixed(3)}`);
 
+      // Stop evidence — captured BEFORE stopping (a missing encoder/output up
+      // front can never count as a pass):
+      //   1) the output path is ready and parts are progressing,
+      //   2) the CURRENT ffmpeg encoder identity (container+PID+starttime),
+      //   3) the live variant (media playlist) URL for the post-stop watch.
+      const outBefore = await pathState('spike/720p');
+      check('S1 output ready before stop', outBefore?.ready === true, JSON.stringify(outBefore));
+      const encoderBefore = ffmpegIdentity();
+      check('S1 encoder running before stop',
+        Boolean(encoderBefore?.pid) && Number.isFinite(encoderBefore.starttime) && !encoderBefore.error,
+        encoderBefore.error ? encoderBefore.error : `pid=${encoderBefore.pid} starttime=${encoderBefore.starttime}`);
+      const containerId = transcoderContainerId();
+      const liveVariant = await mediaPlaylist();
+
       // Stop: DELETE + OBSERVED cleanup + server-side disappearance.
       // NOTE: local PC/tracks are released BEFORE the network DELETE (device
       // safety first). MediaMTX terminates the WHIP session when the peer
@@ -267,6 +354,105 @@ try {
       const ps = await pathState('spike/source');
       check('S1 source gone server-side', ps && ps.ready === false && ps.sourceType === null, JSON.stringify(ps));
       check('S1 WebRTC sessions empty', (await webrtcSessionCount()) === 0, `count=${await webrtcSessionCount()}`);
+
+      // Output path gone via the API (normal response; a missing static path
+      // entry is also acceptable).
+      await sleep(2500); // let the muxer wind down and the retry loop settle
+      const outAfter = await pathState('spike/720p');
+      check('S1 output gone server-side', outAfter === null || (outAfter.ready === false && outAfter.sourceType === null),
+        JSON.stringify(outAfter));
+
+      // The ORIGINAL encoder (same container, same PID+starttime) must be
+      // gone; a retry-loop replacement with a new starttime is allowed. A
+      // QUERY ERROR is not termination evidence.
+      const sameContainer = transcoderContainerId() === containerId;
+      const encoderAfter = ffmpegIdentity();
+      let originalGone, goneDetail;
+      if (encoderBefore?.error || !encoderBefore?.pid) {
+        originalGone = false; goneDetail = 'before-identity unavailable';
+      } else if (encoderAfter?.error) {
+        originalGone = false; goneDetail = encoderAfter.error;
+      } else if (!encoderAfter?.pid) {
+        originalGone = true; goneDetail = 'no ffmpeg after stop';
+      } else {
+        originalGone = !(encoderAfter.pid === encoderBefore.pid && encoderAfter.starttime === encoderBefore.starttime);
+        goneDetail = `before=${encoderBefore.pid}@${encoderBefore.starttime} after=${encoderAfter.pid}@${encoderAfter.starttime}`;
+      }
+      check('S1 original encoder terminated', sameContainer && originalGone, goneDetail);
+
+      // 6-second watch on the recorded variant URL (longer than the 2s retry
+      // loop). EVERY round re-verifies all three termination facts:
+      //   (a) the original encoder identity is absent (query error = fail),
+      //   (b) the API answers normally and source/output stay inactive,
+      //   (c) the variant fetch (explicit timeout) is 404/410 — which also
+      //       keeps being polled for the FULL window — or a FIXED 200 whose
+      //       MEDIA-SEQUENCE/PART parse validity holds with no progression.
+      // Network hangs, 5xx, parse failures or a stopped stack are not
+      // termination evidence.
+      {
+        const t0 = Date.now();
+        let ok = true, detail = '';
+        let lastPart = null, lastMsn = null;
+        let samples = 0;
+        while (Date.now() - t0 < 6000) {
+          try {
+            const id = ffmpegIdentity();
+            if (id?.error) { ok = false; detail = `identity query error: ${id.error}`; break; }
+            if (id?.pid && encoderBefore?.pid && id.pid === encoderBefore.pid && id.starttime === encoderBefore.starttime) {
+              ok = false; detail = `original encoder present again: ${id.pid}@${id.starttime}`; break;
+            }
+          } catch (e) { ok = false; detail = `identity exec error: ${String(e).slice(0, 120)}`; break; }
+
+          try {
+            const src = await pathState('spike/source');
+            const out = await pathState('spike/720p');
+            const inactive = p => p === null || (p.ready === false && p.sourceType === null);
+            if (!inactive(src) || !inactive(out)) {
+              ok = false; detail = `re-activated: src=${JSON.stringify(src)} out=${JSON.stringify(out)}`; break;
+            }
+          } catch (e) { ok = false; detail = `api error: ${String(e).slice(0, 120)}`; break; }
+
+          try {
+            const ctl = new AbortController();
+            const to = setTimeout(() => ctl.abort(), 4000);
+            const r = await fetch(liveVariant.url, { cache: 'no-store', signal: ctl.signal });
+            samples++;
+            if (r.status === 404 || r.status === 410) {
+              clearTimeout(to);
+              // Path removed — still keep polling the full window.
+              lastMsn = null;
+            } else if (r.status !== 200) {
+              clearTimeout(to);
+              ok = false; detail = `HTTP ${r.status}`; break;
+            } else {
+              // The abort timer covers the BODY too: a stalled body read is a
+              // failure, not termination evidence.
+              const text = await r.text();
+              clearTimeout(to);
+              if (!text.includes('#EXTM3U')) { ok = false; detail = 'no EXTM3U'; break; }
+              const msnMatch = text.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+              if (!msnMatch) { ok = false; detail = 'no MEDIA-SEQUENCE (refusing 0 default)'; break; }
+              const msn = Number(msnMatch[1]);
+              // A playlist that advertises PART-INF but carries no actual part
+              // URIs is corrupt — never a pass.
+              const parts = partUris(text);
+              if (text.includes('EXT-X-PART-INF') && parts.length === 0) {
+                ok = false; detail = 'PART-INF without PART entries'; break;
+              }
+              if (parts.some(u => !u || !/\.m4s($|\?)/.test(u))) {
+                ok = false; detail = 'invalid PART URI'; break;
+              }
+              const part = parts.at(-1) ?? null;
+              if (lastMsn !== null && (msn > lastMsn || part !== lastPart)) {
+                ok = false; detail = `progression after stop: msn ${lastMsn}→${msn}, part ${lastPart}→${part}`; break;
+              }
+              lastMsn = msn; lastPart = part;
+            }
+          } catch (e) { ok = false; detail = `fetch error/timeout: ${String(e).slice(0, 120)}`; break; }
+          await sleep(2000);
+        }
+        check('S1 terminated for full 6s window', ok && samples >= 2, detail || `samples=${samples}`);
+      }
     } finally {
       await ctx.close();
     }
@@ -302,11 +488,16 @@ try {
     const page = await ctx.newPage();
     try {
       let delayFirst = true;
+      let releaseFirst;   // signals Node when the first POST's upstream response is secured
+      let signalStopped;  // releases the held response only after the stop completed
+      const firstPostUpstream = new Promise(r => { releaseFirst = r; });
+      const stopCompleted = new Promise(r => { signalStopped = r; });
       await ctx.route(WHIP_FILTER, async route => {
         if (route.request().method() === 'POST' && delayFirst) {
           delayFirst = false;
-          const resp = await route.fetch();
-          await sleep(4000); // the response arrives after the user stopped
+          const resp = await route.fetch(); // upstream 201 in hand
+          releaseFirst(resp.status());      // NOW the test stops the publisher
+          await stopCompleted;              // hold the response across the stop
           return route.fulfill({ response: resp });
         }
         return route.continue();
@@ -314,18 +505,22 @@ try {
 
       await page.goto(`${BASE}/`);
       await page.click('#btn-synth');
-      await page.waitForFunction(() => window.__spikeState?.lastEvent?.includes('POST'), null, { timeout: 15000 });
-      await page.click('#btn-stop'); // stop while POST is in flight
+      const upstreamStatus = await firstPostUpstream; // deterministic barrier
+      check('S3 first POST reached upstream', upstreamStatus === 201, `status=${upstreamStatus}`);
+      await page.click('#btn-stop'); // stop while the response is held back
       await waitForState(page, s => s.lifecycle === 'idle', 10000, 'idle after stop-during-post');
       check('S3 stop during POST → idle, no publish', (await st(page)).whipPost === null);
 
-      // New broadcast starts while the old response is still pending.
+      // New broadcast starts while the old response is STILL HELD. Only after
+      // B is publishing (with its location captured) do we release the late
+      // 201, so "late response arrives during a new broadcast" is guaranteed.
       await startSynthetic(page);
       const newLocation = (await st(page)).location;
       check('S3 new broadcast publishing', true);
+      signalStopped();   // release the late 201 NOW
 
-      // The delayed 201 lands now: only its own session is deleted.
-      await waitForState(page, s => s.lateDeleteStatus !== null, 10000, 'late DELETE');
+      // The delayed 201 lands while B is live: only its own session is deleted.
+      await waitForState(page, s => s.lateDeleteStatus !== null, 15000, 'late DELETE');
       const s = await st(page);
       check('S3 late session DELETE 2xx', s.lateDeleteStatus >= 200 && s.lateDeleteStatus < 300, `status=${s.lateDeleteStatus}`);
       check('S3 new broadcast survives late response', s.lifecycle === 'publishing' && s.location === newLocation);
@@ -395,22 +590,39 @@ try {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await ctx.addInitScript(() => {
+      window.__camStreams = [];
       const orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       let first = true;
       navigator.mediaDevices.getUserMedia = async constraints => {
-        if (first) { first = false; await new Promise(r => setTimeout(r, 4000)); }
-        return orig(constraints);
+        if (first) {
+          first = false;
+          await new Promise(r => setTimeout(r, 4000)); // REALLY delay the capture
+        }
+        const s = await orig(constraints);
+        window.__camStreams.push(s);
+        return s;
       };
     });
     try {
       await page.goto(`${BASE}/`);
       await page.click('#btn-camera');   // fake device (launch flags)
-      await sleep(300);
-      await page.click('#btn-stop');     // stop before capture resolves
+      // Wait until the attempt is really 'starting' — a stop pressed while
+      // still idle is a no-op and the late capture would publish.
+      await page.waitForFunction(() => window.__spikeState?.lifecycle === 'starting', null, { timeout: 8000 });
+      // The stop must land while the capture is still PENDING (nothing
+      // acquired yet) — otherwise this is not a stop-during-capture test.
+      const pending = await page.evaluate(() => (window.__camStreams || []).length);
+      check('S6 stop pressed before capture acquired', pending === 0, `camStreams=${pending}`);
+      await page.click('#btn-stop');     // stop while the capture promise is pending
       await waitForState(page, s => s.lifecycle === 'idle', 10000, 'idle after stop-during-capture');
       const s = await st(page);
       check('S6 stop during capture → no publish', s.whipPost === null && s.lifecycle === 'idle');
-      await sleep(4500); // let the late capture resolve and be discarded
+      // Wait for the late capture to actually resolve, then require its
+      // tracks to exist and all be ended (empty is not a pass).
+      await page.waitForFunction(() => (window.__camStreams || []).length > 0, null, { timeout: 10000 });
+      await sleep(500);
+      const cam = await page.evaluate(() => window.__camStreams.flatMap(s => s.getTracks().map(t => t.readyState)));
+      check('S6 late capture tracks ended', cam.length > 0 && cam.every(r => r === 'ended'), JSON.stringify(cam));
       check('S6 late capture discarded, no session', (await webrtcSessionCount()) === 0);
       // State machine stays healthy.
       await startSynthetic(page);
@@ -524,6 +736,276 @@ try {
       check('S8 no publish', (await st(page)).whipPost === null);
     } finally {
       await ctx.close();
+    }
+  }
+
+  // =========================================================================
+  // Scenario 9: PC mix attenuation — injected display carries a full-scale
+  // tone and the (fake-device) mic is active too. The outgoing mix must be
+  // audible but attenuated: two simultaneous peaks must not clip (<=0.95).
+  // =========================================================================
+  {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await ctx.addInitScript(() => {
+      const md = navigator.mediaDevices;
+      md.getDisplayMedia = async () => {
+        const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+        const g = c.getContext('2d');
+        const iv = setInterval(() => g.fillRect(0, 0, 1280, 720), 100);
+        const s = c.captureStream(30);
+        s.getVideoTracks()[0].addEventListener('ended', () => clearInterval(iv));
+        // loud shared audio: amplitude ~0.9
+        const ac = new AudioContext();
+        const dest = ac.createMediaStreamDestination();
+        const osc = ac.createOscillator(); osc.frequency.value = 300;
+        const gain = ac.createGain(); gain.gain.value = 0.9;
+        osc.connect(gain); gain.connect(dest); osc.start();
+        window.__keepAlive = () => ac.resume();
+        return new MediaStream([...s.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      };
+    });
+    try {
+      await page.goto(`${BASE}/`);
+      await page.click('#btn-screen');       // gesture → AudioContext allowed
+      await waitForState(page, x => x.lifecycle === 'publishing', 25000, 'PC publishing');
+      await waitForState(page, x => ['connected', 'completed'].includes(x.iceState), 15000, 'PC ICE');
+      await sleep(2500);
+      const peaks = [];
+      for (let i = 0; i < 6; i++) {
+        peaks.push(await page.evaluate(() => window.__outgoingAudioPeak()));
+        await sleep(400);
+      }
+      const peak = Math.max(...peaks);
+      check('S9 mix audible', peak > 0.05, `peak=${peak.toFixed(3)} samples=${JSON.stringify(peaks.map(p => +p.toFixed(3)))}`);
+      check('S9 mix attenuated (no clip)', peak <= 0.95, `peak=${peak.toFixed(3)}`);
+      await stopAndWait(page);
+      check('S9 WebRTC sessions empty', (await webrtcSessionCount()) === 0);
+    } finally {
+      await ctx.close();
+    }
+  }
+
+  // =========================================================================
+  // Scenario 10: display sharing ends WHILE the mic permission is pending —
+  // the ended handler must tear down immediately; the late mic resolution is
+  // then discarded with all of its tracks stopped (P1 regression).
+  // =========================================================================
+  {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await ctx.addInitScript(() => {
+      window.__gdmStreams = [];
+      window.__gumStreams = [];
+      const md = navigator.mediaDevices;
+      md.getDisplayMedia = async () => {
+        const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+        const g = c.getContext('2d');
+        const iv = setInterval(() => g.fillRect(0, 0, 1280, 720), 100);
+        const s = c.captureStream(30);
+        s.getVideoTracks()[0].addEventListener('ended', () => clearInterval(iv));
+        window.__gdmStreams.push(s);
+        return s;
+      };
+      const origGum = md.getUserMedia.bind(md);
+      md.getUserMedia = async c => {
+        await new Promise(r => setTimeout(r, 3000)); // ended fires during this wait
+        const s = await origGum(c);
+        window.__gumStreams.push(s);
+        return s;
+      };
+    });
+    try {
+      await page.goto(`${BASE}/`);
+      await page.click('#btn-screen');
+      await page.waitForFunction(() => window.__spikeState?.lifecycle === 'starting', null, { timeout: 8000 });
+      await sleep(700); // inside the mic wait now
+      await page.evaluate(() => {
+        const t = window.__gdmStreams[0].getVideoTracks()[0];
+        t.dispatchEvent(new Event('ended'));   // user pressed 공유 중지
+      });
+      await waitForState(page, s => s.lifecycle === 'idle', 8000, 'idle after ended-during-mic-wait');
+      check('S10 ended during mic wait → teardown', (await st(page)).whipPost === null);
+      // Wait EXPLICITLY for the injected getUserMedia to complete, then
+      // require non-empty tracks before asserting they all ended (an empty
+      // array must never pass as "late mic discarded").
+      await page.waitForFunction(() => (window.__gumStreams || []).length > 0, null, { timeout: 10000 });
+      await sleep(500); // discard path settles
+      const obs = await page.evaluate(() => ({
+        display: window.__gdmStreams.flatMap(s => s.getTracks().map(t => t.readyState)),
+        mic: window.__gumStreams.flatMap(s => s.getTracks().map(t => t.readyState)),
+      }));
+      check('S10 display tracks ended', obs.display.length > 0 && obs.display.every(r => r === 'ended'), JSON.stringify(obs.display));
+      check('S10 late mic tracks ended', obs.mic.length > 0 && obs.mic.every(r => r === 'ended'), JSON.stringify(obs.mic));
+      check('S10 WebRTC sessions empty', (await webrtcSessionCount()) === 0);
+    } finally {
+      await ctx.close();
+    }
+  }
+  // =========================================================================
+  // Scenario 11: player path failure injection (no Safari claims).
+  //  a) native-only environment (MSE removed) + lying canPlayType: the play
+  //     attempt fails and ends with the ACCURATE unrecoverable error.
+  //  b) native selected first (injected) then NotSupportedError: exactly one
+  //     fallback to MSE, which then really plays.
+  // =========================================================================
+  {
+    // --- 11a: MSE unavailable → accurate terminal failure -------------------
+    const ctxA = await browser.newContext();
+    const pageA = await ctxA.newPage();
+    try {
+      await pageA.goto(`${BASE}/?mode=synth&autostart=1`);
+      await waitForState(pageA, s => s.lifecycle === 'publishing', 20000, '11a publishing');
+      await pageA.evaluate(() => {
+        window.Hls = undefined; // MSE gone
+        const orig = HTMLMediaElement.prototype.canPlayType;
+        HTMLMediaElement.prototype.canPlayType = function (t) {
+          return String(t).includes('mpegurl') ? 'probably' : orig.call(this, t);
+        };
+      });
+      await pageA.click('#btn-play');
+      await sleep(2500);
+      const s = await st(pageA);
+      const probe = await pageA.evaluate(() => window.__playbackProbe());
+      check('S11a ends as none with accurate failure', s.playerMode === 'none' && s.fallbackAttempted === true,
+        `mode=${s.playerMode} fallback=${s.fallbackAttempted} last=${s.lastEvent}`);
+      check('S11a no fake playback', probe.currentTime === 0 && probe.frames === 0, JSON.stringify(probe));
+      await stopAndWait(pageA);
+    } finally {
+      await ctxA.close();
+    }
+
+    // --- 11b: native fails first → exactly one MSE fallback, real playback --
+    const ctxB = await browser.newContext();
+    const pageB = await ctxB.newPage();
+    try {
+      await pageB.goto(`${BASE}/?mode=synth&autostart=1`);
+      await waitForState(pageB, s => s.lifecycle === 'publishing', 20000, '11b publishing');
+      await waitForState(pageB, s => ['connected', 'completed'].includes(s.iceState), 15000, '11b ICE');
+      await pageB.evaluate(() => {
+        // Force native selection first: the FIRST isSupported() call lies.
+        const origCT = HTMLMediaElement.prototype.canPlayType;
+        HTMLMediaElement.prototype.canPlayType = function (t) {
+          return String(t).includes('mpegurl') ? 'probably' : origCT.call(this, t);
+        };
+        const origSup = window.Hls.isSupported.bind(window.Hls);
+        let first = true;
+        window.Hls.isSupported = () => { if (first) { first = false; return false; } return origSup(); };
+      });
+      await sleep(12000); // let HLS output be ready
+      await pageB.click('#btn-play');
+      await waitForState(pageB, s => s.playerMode === 'mse' && s.fallbackAttempted === true, 15000, '11b mse fallback');
+      const p1 = await pageB.evaluate(() => window.__playbackProbe());
+      await sleep(2500);
+      const p2 = await pageB.evaluate(() => window.__playbackProbe());
+      check('S11b fallback plays via MSE', p2.currentTime > p1.currentTime && p2.currentTime > 0,
+        `${p1.currentTime.toFixed(2)}→${p2.currentTime.toFixed(2)}`);
+      check('S11b decoded frames increase after fallback', p2.frames > p1.frames && p2.frames > 0, `${p1.frames}→${p2.frames}`);
+      await stopAndWait(pageB);
+    } finally {
+      await ctxB.close();
+    }
+  }
+  // =========================================================================
+  // Scenario 12: destination audio-track leaks on LATER init failures.
+  // AC.close() does not end a MediaStreamDestination track, so dest cleanup
+  // must be registered the moment dest is created.
+  //  a) synthetic: dest succeeds, createOscillator throws.
+  //  b) PC mix: dest+gains succeed, createMediaStreamSource throws.
+  // =========================================================================
+  {
+    async function ctxInit(ctx) {
+      await ctx.addInitScript(() => {
+        window.__destTracks = [];
+        window.__gdmStreams = [];
+        window.__gumStreams = [];
+        window.__acStats = { created: 0, closed: 0 };
+        const AC = window.AudioContext;
+        window.AudioContext = class extends AC {
+          constructor(...a) { super(...a); window.__acStats.created++; }
+          close() { window.__acStats.closed++; return super.close(); }
+        };
+        const origDest = AC.prototype.createMediaStreamDestination;
+        AC.prototype.createMediaStreamDestination = function (...a) {
+          const d = origDest.apply(this, a);
+          window.__destTracks.push(...d.stream.getTracks());
+          return d;
+        };
+      });
+    }
+
+    // --- 12a: synthetic, oscillator creation throws after dest succeeded ---
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await ctxInit(ctx);
+      await ctx.addInitScript(() => {
+        const orig = AudioContext.prototype.createOscillator;
+        let first = true;
+        AudioContext.prototype.createOscillator = function (...a) {
+          if (first) { first = false; throw new DOMException('injected osc failure', 'InvalidStateError'); }
+          return orig.apply(this, a);
+        };
+      });
+      try {
+        await page.goto(`${BASE}/`);
+        await page.click('#btn-synth');
+        await waitForState(page, s => s.lifecycle === 'idle', 10000, 'idle after osc failure');
+        const obs = await page.evaluate(() => ({
+          dest: window.__destTracks.map(t => t.readyState),
+          ac: window.__acStats,
+        }));
+        check('S12a dest tracks exist and ended', obs.dest.length > 0 && obs.dest.every(r => r === 'ended'), JSON.stringify(obs.dest));
+        check('S12a AudioContext closed', obs.ac.created > 0 && obs.ac.closed === obs.ac.created, JSON.stringify(obs.ac));
+        check('S12a no publish', (await st(page)).whipPost === null);
+      } finally {
+        await ctx.close();
+      }
+    }
+
+    // --- 12b: PC mix, source connection throws after dest+gains succeeded --
+    {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await ctxInit(ctx);
+      await ctx.addInitScript(() => {
+        const md = navigator.mediaDevices;
+        md.getDisplayMedia = async () => {
+          const c = document.createElement('canvas'); c.width = 640; c.height = 360;
+          const g = c.getContext('2d');
+          const iv = setInterval(() => g.fillRect(0, 0, 640, 360), 100);
+          const s = c.captureStream(15);
+          s.getVideoTracks()[0].addEventListener('ended', () => clearInterval(iv));
+          window.__gdmStreams.push(s);
+          return s;
+        };
+        const origGum = md.getUserMedia.bind(md);
+        md.getUserMedia = async c => { const s = await origGum(c); window.__gumStreams.push(s); return s; };
+        const orig = AudioContext.prototype.createMediaStreamSource;
+        let first = true;
+        AudioContext.prototype.createMediaStreamSource = function (...a) {
+          if (first) { first = false; throw new DOMException('injected source failure', 'InvalidStateError'); }
+          return orig.apply(this, a);
+        };
+      });
+      try {
+        await page.goto(`${BASE}/`);
+        await page.click('#btn-screen');
+        await waitForState(page, s => s.lifecycle === 'idle', 10000, 'idle after source failure');
+        const obs = await page.evaluate(() => ({
+          dest: window.__destTracks.map(t => t.readyState),
+          display: window.__gdmStreams.flatMap(s => s.getTracks().map(t => t.readyState)),
+          mic: window.__gumStreams.flatMap(s => s.getTracks().map(t => t.readyState)),
+          ac: window.__acStats,
+        }));
+        check('S12b dest tracks exist and ended', obs.dest.length > 0 && obs.dest.every(r => r === 'ended'), JSON.stringify(obs.dest));
+        check('S12b display tracks ended', obs.display.every(r => r === 'ended'), JSON.stringify(obs.display));
+        check('S12b mic tracks ended', obs.mic.length > 0 && obs.mic.every(r => r === 'ended'), JSON.stringify(obs.mic));
+        check('S12b AudioContext closed', obs.ac.created > 0 && obs.ac.closed === obs.ac.created, JSON.stringify(obs.ac));
+        check('S12b no publish', (await st(page)).whipPost === null);
+      } finally {
+        await ctx.close();
+      }
     }
   }
 } finally {

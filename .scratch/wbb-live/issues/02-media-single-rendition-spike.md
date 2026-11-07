@@ -10,7 +10,7 @@
 
 - [ ] PC 화면/탭+공유 소리+마이크가 Web Audio 단일 트랙으로 전달되고 별도 기기에서 두 음원을 구분해 듣는다.
 - [ ] 모바일 카메라·마이크가 별도 기기에서 보이고 들린다. 기기가 없으면 미검증으로 남긴다.
-- [ ] MediaMTX WHIP POST/Location/PATCH/DELETE와 명시적 ingress 종료 API를 확인한다.
+- [x] MediaMTX WHIP POST/Location/PATCH/DELETE와 명시적 ingress 종료 API를 loopback 합성 환경에서 확인했다. 외부망·제품 인증 통합은 별도다.
 - [ ] 실제 입력 codec→FFmpeg VAAPI1080/720/480 중 한 품질→H.264/AAC LL-HLS가 재생된다. 인코딩만 성공한 합성 테스트와 구분한다.
 - [ ] 권한 거절·공유 중지·부분 실패가 track/AudioContext/PeerConnection/변환 프로세스를 정리한다.
 - [ ] 외부망에서 ICE 경로를 확인하고 TURN 필요 여부·필요 포트를 비밀 없이 기록한다.
@@ -18,13 +18,13 @@
 
 **검증:** PC-01~04, MOB-01~03의 기술 관문. 보안 통합이 없으므로 제품 인수 완료는 아니다. 미디어 전제 실패 시 원인·대안을 Codex에 전달한다.
 
-**결과:** 2026-11-07 패키지 복구 후 지정 pi GLM에서 로컬 실험을 구현했다. WHIP/ICE·H.264/AAC·LL-HLS part를 확인했고 검증은50통과·1건 건너뜀·재생2실패다. 기본 Chromium의 H.264 미지원과 Chrome의 native HLS 선택 실패를 분리했다. Codex 진단용 MSE 강제 경로에서는 재생되지만 구현은 아직 수정되지 않았다. GLM이5시간 사용 한도429/1308에 도달해 추가 수정이 막혔다. 제공자가 안내한 재개 시각은2026-11-08 01:56:19(시간대 미표기)다.
+**결과:** 2026-11-08 02:57 KST 재개 요청 후 지정 pi GLM의 실제 작업 시작을 확인했다. 이전 01:57 요청의429/1308과 달리 구현·수정이 수행됐다. pi와 Codex의 독립 전체 실행은 각각83통과·건너뜀0·실패0이다. Chrome H.264/AAC preflight, MSE 우선 및 native 실패 처리, 공유 중지 경합, 합성·PC destination 트랙 정리, 혼합 gain, 원래 FFmpeg 종료와6초 관측을 확인했다. 별도 verify.sh는 H.2641280×720/AAC를 검증했고, 관리 API 강제 종료200·source/output 비활성·세션0·동일 세션 재종료404를 관측했다. 합성/모의 결과이며 실제 기기 관문은 완료하지 않았다.
 
-**재개 순서(구현은 기존 pi GLM):**
+**다음 순서(구현은 기존 pi GLM):**
 
-1. `docs/reviews/02-media-spike.md`와 `docs/verification/02-media-spike.md`를 읽는다. Chrome 코덱 사전 검사와 hls.js/MSE 선택·native 실패 fallback·오류 안내를 수정하고 실제 시간/프레임 증가를 재검증한다.
-2. 화면 획득 즉시 ended를 처리한다. 마이크 대기 중 공유 중지 후 허용 회귀, 합성 초기화 부분 실패 정리, PC 두 음원 clipping 방지 gain을 구현한다.
-3. `verify.sh`의 redirect·master→media playlist 탐색을 고친다. FFmpeg 원래 PID·출력 연결·새 part 생성의 종료를 확인한다. 검증 불가를 PASS로 처리하지 않는다.
-4. Codex가 재검토·검증한 뒤 체크포인트를 main에 통합한다. 실제 두 기기·외부망·VAAPI·Safari·ABR는 계속 별도 관문이다. 검증용 HTML/JS는 제품 Flutter를 대체하지 않는다.
+1. `docs/reviews/02-media-spike.md`와 `docs/verification/02-media-spike.md`의 로컬 수정·독립 검증 결과를 기준으로 진행한다. 로컬 체크포인트 통합과 티켓02 전체 완료를 구분한다.
+2. 실제 PC의 화면+탭/시스템 소리+마이크, 휴대폰 카메라+마이크를 별도 물리 기기에서 확인하고 시작·시청·종료·권한 거절 결과를 남긴다. 실제 캡처·청취는 사용자와 함께 진행해야 한다.
+3. Labtop VAAPI 단일 품질, 안전한 HTTPS 접근, 외부망 ICE/NAT/TURN과 Safari 재생을 확인한다. 인증 없는 현재 loopback 실험을 그대로 공개하지 않는다.
+4. 실제02 관문 충족 전03 ABR 및04 제품 송출 통합을 완료로 처리하지 않는다. HTML/JS 실험은 Flutter 제품 UI를 대체하지 않는다.
 
-현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 스파이크 코드·문서 체크포인트는 별도 작업 브랜치에 보존하며 자동 전체 검사 통과나 티켓02 완료로 표시하지 않는다.
+현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 로컬 합성 검사 성공을 실제 두 기기·VAAPI·외부망 성공으로 표시하지 않는다.

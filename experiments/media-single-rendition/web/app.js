@@ -280,6 +280,8 @@ async function startPublish(makeStream, kindLabel) {
 // ---------------------------------------------------------------------------
 
 function syntheticStream(a) {
+  // Register a cleanup for EVERY resource right after it is acquired, so an
+  // exception part-way through initialization cannot leak anything.
   const canvas = document.createElement('canvas');
   canvas.width = 1280; canvas.height = 720;
   const ctx = canvas.getContext('2d');
@@ -294,19 +296,31 @@ function syntheticStream(a) {
     ctx.fillText(`WBB synthetic ${new Date().toISOString().slice(11, 19)}`, 40, 80);
     raf = requestAnimationFrame(draw);
   })();
+  a.cleanups.push(() => cancelAnimationFrame(raf));
+
   const video = canvas.captureStream(30);
+  a.cleanups.push(() => video.getTracks().forEach(tr => { if (tr.readyState !== 'ended') tr.stop(); }));
 
   const ac = new AudioContext();
-  const dest = ac.createMediaStreamDestination();
-  const osc = ac.createOscillator(); osc.frequency.value = 440;
-  const osc2 = ac.createOscillator(); osc2.frequency.value = 880;
-  const gain = ac.createGain(); gain.gain.value = 0.12;
-  osc.connect(gain); osc2.connect(gain); gain.connect(dest);
-  osc.start(); osc2.start();
-
   a.ac = ac; // observed at teardown via ac.state
-  a.cleanups.push(() => { cancelAnimationFrame(raf); osc.stop(); osc2.stop(); return ac.close(); });
-  return new MediaStream([...video.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  a.cleanups.push(() => ac.close());
+
+  try {
+    const dest = ac.createMediaStreamDestination();
+    // AC.close() does NOT end the destination's audio track — stop it
+    // explicitly, registered immediately so later init failures can't leak it.
+    a.cleanups.push(() => dest.stream.getTracks().forEach(tr => { if (tr.readyState !== 'ended') tr.stop(); }));
+    const osc = ac.createOscillator(); osc.frequency.value = 440;
+    const osc2 = ac.createOscillator(); osc2.frequency.value = 880;
+    const gain = ac.createGain(); gain.gain.value = 0.12;
+    osc.connect(gain); osc2.connect(gain); gain.connect(dest);
+    osc.start(); osc2.start();
+    a.cleanups.push(() => { osc.stop(); osc2.stop(); });
+    return new MediaStream([...video.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  } catch (e) {
+    stopLocal(a);
+    throw new Error(`합성 오디오 초기화 실패(${e.name}) — 자원 정리 완료`);
+  }
 }
 
 async function pcScreenStream(a) {
@@ -318,6 +332,14 @@ async function pcScreenStream(a) {
   // Register EVERY acquired resource on the attempt immediately, so a stop
   // at any later point (mic wait, mix setup, stale) releases the originals.
   a.cleanups.push(() => display.getTracks().forEach(t => { if (t.readyState !== 'ended') t.stop(); }));
+
+  // P1: 화면 공유 중지(브라우저 UI '공유 중지')는 마이크 대기 중에도 즉시
+  // 공통 종료 경로로 연결된다. 획득 직시 ended 리스너를 건다.
+  const displayVideo = display.getVideoTracks()[0];
+  displayVideo.addEventListener('ended', () => {
+    log('display track ended (공유 중지) → 공통 정리 경로 진입');
+    if (!stale(a)) teardown();
+  });
   if (stale(a)) {           // stopped while the display promise was pending:
     stopLocal(a);           // release display NOW, never prompt for the mic
     throw new Error('시작 도중 정지됨 — display 자원 정리 (마이크 요청 없음)');
@@ -333,7 +355,13 @@ async function pcScreenStream(a) {
     throw new Error(`마이크 획득 실패(${e.name}) — 화면 공유 정리 후 중단 (마이크는 필수)`);
   }
   a.cleanups.push(() => mic.getTracks().forEach(t => { if (t.readyState !== 'ended') t.stop(); }));
+
+  // 마이크를 기다리는 동안 공유가 중지됐거나 시도가 취소됐으면 여기서 끝낸다.
   if (stale(a)) { stopLocal(a); throw new Error('시작 도중 정지됨 — 자원 정리 완료'); }
+  if (displayVideo.readyState === 'ended') {
+    stopLocal(a);
+    throw new Error('마이크 대기 중 화면 공유가 종료됨 — 자원 정리 후 중단');
+  }
 
   const sharedAudio = display.getAudioTracks();
   els.mixNote.textContent = sharedAudio.length
@@ -347,8 +375,16 @@ async function pcScreenStream(a) {
     a.ac = ac;                                  // register BEFORE any throw
     a.cleanups.push(() => ac.close());          // can happen in mix setup
     const dest = ac.createMediaStreamDestination();
-    if (sharedAudio.length) ac.createMediaStreamSource(new MediaStream(sharedAudio)).connect(dest);
-    ac.createMediaStreamSource(mic).connect(dest);
+    // AC.close() does NOT end the destination's audio track — stop it
+    // explicitly, registered immediately so later mix failures can't leak it.
+    a.cleanups.push(() => dest.stream.getTracks().forEach(tr => { if (tr.readyState !== 'ended') tr.stop(); }));
+    // 두 음원을 합산할 때 clipping을 피하기 위해 각 입력에 감쇠 gain을 건다
+    // (두 입력이 동시에 최대 진폭이어도 합이 1.0을 넘지 않게 0.5씩).
+    const sharedGain = ac.createGain(); sharedGain.gain.value = 0.5;
+    const micGain = ac.createGain(); micGain.gain.value = 0.5;
+    if (sharedAudio.length) ac.createMediaStreamSource(new MediaStream(sharedAudio)).connect(sharedGain);
+    ac.createMediaStreamSource(mic).connect(micGain);
+    sharedGain.connect(dest); micGain.connect(dest);
     return new MediaStream([...display.getVideoTracks(), ...dest.stream.getAudioTracks()]);
   } catch (e) {
     stopLocal(a);          // AC/mix failure must not leak display/mic either
@@ -368,6 +404,37 @@ async function cameraStream(a) {
 // Automation observability hooks (read-only):
 window.__spikeTracks = () => (current && current.stream ? current.stream.getTracks() : []);
 window.__stopVideoTrack = () => { if (current && current.stream) current.stream.getVideoTracks()[0]?.stop(); };
+
+// Peak amplitude of the CURRENT attempt's outgoing (mixed) audio track —
+// used to verify the PC mix attenuation. The observer AudioContext/analyser
+// are owned by the attempt (closed in its cleanups) and rebuilt only when
+// the audio track changes, so no context survives teardown and a new round
+// never measures the previous attempt's track.
+window.__outgoingAudioPeak = async () => {
+  const a = current;
+  if (!a || !a.stream) return -1;
+  const at = a.stream.getAudioTracks()[0];
+  if (!at || at.readyState === 'ended') return -1;
+  try {
+    if (!a.__ogAn || a.__ogTrack !== at || a.__ogAC.state === 'closed') {
+      if (a.__ogAC) { try { a.__ogAC.close(); } catch (_) {} }
+      a.__ogAC = new AudioContext();
+      a.__ogAn = a.__ogAC.createAnalyser();
+      a.__ogAC.createMediaStreamSource(new MediaStream([at])).connect(a.__ogAn);
+      a.__ogTrack = at;
+      a.cleanups.push(() => {
+        if (a.__ogAC) { try { a.__ogAC.close(); } catch (_) {} }
+        a.__ogAC = null; a.__ogAn = null; a.__ogTrack = null;
+      });
+    }
+    const buf = new Float32Array(a.__ogAn.fftSize);
+    a.__ogAn.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (const v of buf) peak = Math.max(peak, Math.abs(v));
+    return peak;
+  } catch (_) { return -1; }
+};
+
 
 // ---------------------------------------------------------------------------
 // WHIP helpers
@@ -412,63 +479,125 @@ let hls = null;
 const playBtn = document.getElementById('btn-play');
 const video = document.getElementById('playback');
 
+function attachMse() {
+  if (!(window.Hls && Hls.isSupported())) return false;
+  hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    els.hls.textContent = `hls.js ${Hls.version} manifest OK (MSE)`;
+    log(`hls.js ${Hls.version}: manifest 파싱 성공 (MSE 경로)`, 'ok');
+  });
+  hls.on(Hls.Events.ERROR, (_, data) => {
+    if (data.fatal) { els.hls.textContent = `hls.js 오류: ${data.details}`; log(`hls.js 치명 오류: ${data.details}`, 'err'); }
+  });
+  hls.loadSource(HLS_URL);
+  hls.attachMedia(video);
+  return true;
+}
+
+// MSE를 쓸 수 없는 환경에서만 native HLS를 시도한다(Chrome은 실제 미지원).
+let playerMode = 'none';      // 'mse' | 'native' | 'none'
+let fallbackAttempted = false;
+function setPlayerMode(mode, fallback) {
+  playerMode = mode;
+  updateState({ playerMode: mode, fallbackAttempted: Boolean(fallback) });
+}
+
 async function attachPlayer() {
+  if (attachMse()) { setPlayerMode('mse'); return; }
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    setPlayerMode('native');
     video.src = HLS_URL;
     els.hls.textContent = 'native HLS';
-  } else if (window.Hls && window.Hls.isSupported()) {
-    hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      els.hls.textContent = `hls.js ${Hls.version} manifest OK`;
-      log(`hls.js ${Hls.version}: manifest 파싱 성공`, 'ok');
+    log('MSE 미지원 — native HLS 경로 시도', 'warn');
+    video.addEventListener('error', () => {
+      const e = video.error ? `${video.error.code} ${video.error.message}` : 'unknown';
+      log(`native HLS 요소 오류(지연 실패 포함): ${e}`, 'err');
+      tryFallbackToMse(`element error ${e}`);
     });
-    hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) { els.hls.textContent = `hls.js 오류: ${data.details}`; log(`hls.js 치명 오류: ${data.details}`, 'err'); }
-    });
-    hls.loadSource(HLS_URL);
-    hls.attachMedia(video);
-  } else {
-    els.hls.textContent = 'HLS 재생 불가';
-    log('hls.js 미지원 환경', 'err');
     return;
   }
-  video.addEventListener('loadedmetadata', () => {
-    els.videoInfo.textContent = `${video.videoWidth}x${video.videoHeight}`;
-    log(`재생 스트림 해상도: ${video.videoWidth}x${video.videoHeight}`);
-  });
+  setPlayerMode('none');
+  els.hls.textContent = 'HLS 재생 불가';
+  log('HLS 재생 불가: MSE도 native HLS도 사용할 수 없음', 'err');
+}
+
+// native 경로가 실제로 실패하면 MSE로 1회만 폴백한다. MSE조차 불가능하면
+// 정확한 오류로 종료한다(자동재생 정책으로 오인하지 않음).
+async function tryFallbackToMse(reason) {
+  if (playerMode !== 'native' || fallbackAttempted) return;
+  fallbackAttempted = true;
+  log(`native HLS 실패(${reason}) — hls.js/MSE 폴백 시도`, 'warn');
+  try { video.pause(); } catch (_) {}
+  video.removeAttribute('src');
+  video.load();
+  if (attachMse()) {
+    setPlayerMode('mse', true);
+    try { await video.play(); log('폴백 재생 시작 (MSE)', 'ok'); }
+    catch (e) { log(`폴백 재생 거부: ${e.name}`, 'warn'); }
+  } else {
+    setPlayerMode('none', true);
+    els.hls.textContent = `재생 불가 (native 실패: ${reason})`;
+    log(`native 실패(${reason}) + MSE 불가 — 재생 불가`, 'err');
+  }
 }
 
 playBtn.addEventListener('click', async () => {
   if (!hls && !video.src) await attachPlayer();
-  try { await video.play(); log('재생 시작', 'ok'); } catch (e) { log(`재생 거부(자동재생 정책): ${e.name}`, 'warn'); }
+  try {
+    await video.play();
+    log('재생 시작', 'ok');
+  } catch (e) {
+    log(`재생 실패: ${e.name}${e.message ? ' — ' + e.message : ''}`, 'warn');
+    if (playerMode === 'native' && (e.name === 'NotSupportedError' || video.error)) {
+      await tryFallbackToMse(e.name);
+    }
+  }
 });
 document.getElementById('btn-sound').addEventListener('click', async () => {
   video.muted = false;
   try { await video.play(); log('소리 켜고 재생 시도', 'ok'); } catch (e) { log(`재생 거부: ${e.name}`, 'warn'); }
 });
 
-// Playback evidence probe: currentTime, decoded frames, best-effort audio level.
+
+
+// Playback evidence probe: currentTime, decoded frames, best-effort audio
+// level. captureStream + analyser are created ONCE per player source and
+// reused (a freshly created analyser reads zeros); rebuilt only when the
+// element's source changes (e.g. native→MSE fallback) and disposed then.
 window.__playbackProbe = async () => {
   const q = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : { totalVideoFrames: 0 };
   let audioLevel = -1;
   try {
-    if (!window.__pbAnalyser) {
-      window.__pbAC = new AudioContext();
-      const stream = video.captureStream ? video.captureStream() : null;
-      if (stream && stream.getAudioTracks().length) {
-        const src = window.__pbAC.createMediaStreamSource(stream);
-        window.__pbAnalyser = window.__pbAC.createAnalyser();
-        src.connect(window.__pbAnalyser);
+    const srcRef = video.currentSrc || video.src || '';
+    if (window.__pbAn && (window.__pbSrcRef !== srcRef || window.__pbAC.state === 'closed')) {
+      window.__disposePlaybackObserver();
+    }
+    if (!window.__pbAn && video.captureStream) {
+      const stream = video.captureStream();
+      const at = stream && stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+      if (at) {
+        window.__pbStream = stream;
+        window.__pbAC = new AudioContext();
+        window.__pbAn = window.__pbAC.createAnalyser();
+        window.__pbAC.createMediaStreamSource(new MediaStream([at])).connect(window.__pbAn);
+        window.__pbSrcRef = srcRef;
       }
     }
-    if (window.__pbAnalyser) {
-      const buf = new Uint8Array(window.__pbAnalyser.frequencyBinCount);
-      window.__pbAnalyser.getByteFrequencyData(buf);
-      audioLevel = buf.reduce((a, b) => a + b, 0);
+    if (window.__pbAn) {
+      const buf = new Uint8Array(window.__pbAn.frequencyBinCount);
+      window.__pbAn.getByteFrequencyData(buf);
+      audioLevel = buf.reduce((x, y) => x + y, 0);
     }
   } catch (_) { /* best effort */ }
   return { currentTime: video.currentTime, frames: q.totalVideoFrames, audioLevel };
 };
+window.__disposePlaybackObserver = () => {
+  if (window.__pbStream) { try { window.__pbStream.getTracks().forEach(t => t.stop()); } catch (_) {} }
+  if (window.__pbAC) { try { window.__pbAC.close(); } catch (_) {} }
+  window.__pbStream = null; window.__pbAC = null; window.__pbAn = null; window.__pbTrack = null; window.__pbSrcRef = null;
+};
+window.addEventListener('pagehide', window.__disposePlaybackObserver);
+
 
 // LL-HLS manifest evidence: master → media playlist, part markers.
 async function manifestProbe() {
@@ -502,7 +631,9 @@ function refreshButtons() {
 refreshButtons();
 setInterval(refreshButtons, 300);
 
-// Publisher outbound stats for automation.
+// Publisher outbound stats + publisher AudioContext state for automation.
+// The click gesture is what allows the AudioContext to actually run; the
+// synthetic audio path is only verified as 'running'.
 setInterval(async () => {
   if (current && !current.cancelled && state.lifecycle === 'publishing' && current.pc) {
     try {
@@ -512,6 +643,7 @@ setInterval(async () => {
           updateState({ outbound: { bytes: r.bytesSent, frames: r.framesEncoded ?? r.framesSent ?? 0 } });
         }
       });
+      updateState({ publisherAC: current.ac ? current.ac.state : null });
     } catch (_) {}
   }
 }, 1000);

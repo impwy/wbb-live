@@ -1,0 +1,37 @@
+# WBB media spike — isolated verification stack (ticket 02).
+# Separate docker project; every host port is loopback-only.
+# MediaMTX admin API (9990) is never published off-loopback.
+name: wbb-media-spike
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg
+    # Image entrypoint is /mediamtx; pass only the config path.
+    command: ["/run/config/mediamtx.yml"]
+    volumes:
+      - ./mediamtx.yml:/run/config/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:8888:8888" # HLS (LL-HLS playback)
+      - "127.0.0.1:8889:8889" # WHIP/WHEP (HTTP signaling)
+      - "127.0.0.1:9990:9990" # admin API — loopback only
+      - "127.0.0.1:8554:8554" # RTSP (host-side ffprobe verification)
+      # WebRTC ICE/UDP: same port number inside and outside the container so
+      # the SDP candidates (127.0.0.1:18389) are reachable from the host.
+      - "127.0.0.1:18389:18389/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9990/v3/paths/list"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # CPU-only transcode loop (macOS local; VAAPI/GPU is verified on Labtop later).
+  # Retries forever until the WHIP source exists.
+  transcoder:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg
+    entrypoint: ["/bin/sh", "/run/transcode.sh"]
+    volumes:
+      - ./transcode.sh:/run/transcode.sh:ro
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    restart: unless-stopped

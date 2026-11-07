@@ -1,0 +1,63 @@
+# MediaMTX 1.21.3 spike configuration (only deviations from defaults).
+# Verified keys against the image's own /mediamtx.yml defaults.
+
+logLevel: info
+logDestinations: [stdout]
+
+# Local spike auth: the admin API (9990) is published loopback-only on the
+# host, so granting `api` to any source IP here does not expose it off-loopback.
+# (Default config allows api only from the container's own 127.0.0.1, which
+# rejects host-side verification through the NATed bridge IP.)
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: playback
+        path:
+      - action: api
+      - action: metrics
+
+api: true
+apiAddress: :9990
+
+rtsp: true
+rtspAddress: :8554
+
+rtmp: false
+srt: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+# Exact origins only (no wildcard): the spike UI server.
+hlsAllowOrigins: ["http://127.0.0.1:8090", "http://localhost:8090"]
+
+webrtc: true
+webrtcAddress: :8889
+# ICE/UDP uses the same port number inside and outside the container; a
+# remapped port (host 18389 -> container 8189) would put an unreachable
+# container port into the SDP and ICE would fail.
+webrtcLocalUDPAddress: :18389
+webrtcLocalTCPAddress: ""
+# Do not advertise the container's interface IPs (unreachable from macOS);
+# 127.0.0.1 is published via the loopback port mapping.
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+# Exact origins only (no wildcard): the spike UI server.
+webrtcAllowOrigins: ["http://127.0.0.1:8090", "http://localhost:8090"]
+
+paths:
+  # Browser WHIP publish lands here.
+  spike/source:
+    source: publisher
+  # FFmpeg re-publishes the transcoded 720p H.264/AAC rendition here.
+  spike/720p:
+    source: publisher

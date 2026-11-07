@@ -2,7 +2,7 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 개발 중 (티켓 01 — 이메일 인증 + 방송 CRUD 1차 기능). 미디어 송출·시청·Google 로그인은 후속 티켓.
+- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 미디어 실험 진행 중(재생 경로 수정 필요). 제품 송출·시청·Google 로그인은 아직 미완료.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
 - **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
 - 설계 계약: `docs/design.md` (Codex 관리)
@@ -15,6 +15,7 @@
 | --- | --- |
 | `wbb-backend/` | Go API 서버 (`net/http` + pgx + go-redis, Argon2id, HS256 JWT) |
 | `wbb-frontend/` | Flutter Web 앱 (방송 목록/상세, 가입·로그인, 내 방송 CRUD) |
+| `experiments/media-single-rendition/` | 로컬 미디어 실험. [실행 조건과 알려진 실패](experiments/media-single-rendition/README.md) |
 | `deploy/` | 배포 구성 (Caddy/k3s, 추후 확장) |
 | `docs/`, `.scratch/` | 설계 문서와 티켓 (Codex 관리) |
 

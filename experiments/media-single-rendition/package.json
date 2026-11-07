@@ -1,0 +1,12 @@
+{
+  "name": "wbb-media-spike-automation",
+  "private": true,
+  "type": "module",
+  "description": "Optional synthetic-mode automation for the WBB media spike (canvas+oscillator only).",
+  "scripts": {
+    "verify": "node verify-synthetic.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

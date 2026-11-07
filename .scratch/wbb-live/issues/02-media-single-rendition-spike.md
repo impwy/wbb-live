@@ -18,6 +18,13 @@
 
 **검증:** PC-01~04, MOB-01~03의 기술 관문. 보안 통합이 없으므로 제품 인수 완료는 아니다. 미디어 전제 실패 시 원인·대안을 Codex에 전달한다.
 
-**결과:** 초기 구현 요청은 GLM 제공자의 HTTP429/code1113 오류로 시작하지 못했다. 2026-11-07 사용자가 패키지 복구를 알리고 재개를 요청했다. 지정된 기존 pi 세션에서 작업을 이어가며, 실제 산출물과 검증 결과를 확인한 뒤 완료 여부를 갱신한다.
+**결과:** 2026-11-07 패키지 복구 후 지정 pi GLM에서 로컬 실험을 구현했다. WHIP/ICE·H.264/AAC·LL-HLS part를 확인했고 검증은50통과·1건 건너뜀·재생2실패다. 기본 Chromium의 H.264 미지원과 Chrome의 native HLS 선택 실패를 분리했다. Codex 진단용 MSE 강제 경로에서는 재생되지만 구현은 아직 수정되지 않았다. GLM이5시간 사용 한도429/1308에 도달해 추가 수정이 막혔다. 제공자가 안내한 재개 시각은2026-11-08 01:56:19(시간대 미표기)다.
 
-**재개 계획:** `experiments/media-single-rendition/`에 로컬 전용 검증 구성을 만든다. 우선 합성 canvas·오디오 입력으로 자동 검증하며, 실제 PC 공유·음성·휴대폰·외부망·VAAPI는 별도 미검증 상태로 유지한다. 검증용 HTML/JS는 제품 Flutter를 대체하지 않는다. MediaMTX1.21.3-ffmpeg ARM64 이미지 존재를 확인했으며, ICE 광고 포트와 Docker 공개 포트 번호를 일치시킨다. 실제 encoder·코덱·재생은 미검증이다.
+**재개 순서(구현은 기존 pi GLM):**
+
+1. `docs/reviews/02-media-spike.md`와 `docs/verification/02-media-spike.md`를 읽는다. Chrome 코덱 사전 검사와 hls.js/MSE 선택·native 실패 fallback·오류 안내를 수정하고 실제 시간/프레임 증가를 재검증한다.
+2. 화면 획득 즉시 ended를 처리한다. 마이크 대기 중 공유 중지 후 허용 회귀, 합성 초기화 부분 실패 정리, PC 두 음원 clipping 방지 gain을 구현한다.
+3. `verify.sh`의 redirect·master→media playlist 탐색을 고친다. FFmpeg 원래 PID·출력 연결·새 part 생성의 종료를 확인한다. 검증 불가를 PASS로 처리하지 않는다.
+4. Codex가 재검토·검증한 뒤 체크포인트를 main에 통합한다. 실제 두 기기·외부망·VAAPI·Safari·ABR는 계속 별도 관문이다. 검증용 HTML/JS는 제품 Flutter를 대체하지 않는다.
+
+현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 스파이크 코드·문서 체크포인트는 별도 작업 브랜치에 보존하며 자동 전체 검사 통과나 티켓02 완료로 표시하지 않는다.

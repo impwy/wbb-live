@@ -32,3 +32,9 @@ Spec 총 5건. 이 축에서 가장 중요한 문제는 Redis 캐시 유실로 �
 - 업데이트 후 `govulncheck` 결과: 호출 경로0건, import한 패키지0건. 미사용 `golang.org/x/crypto/openpgp` 모듈 경고 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 1건은 별도 기록한다. OpenPGP는 이 서비스가 사용하지 않는다.
 - 최종 Codex 독립 실행: 백엔드30개 테스트(-race), vet, build 통과. HTTP 테스트 패키지 약42.5초. 실제 PostgreSQL 컨테이너 재생성과 API 프로세스 재시작 후 방송 정보가 보존됐고, 임시 서명 키 변경 뒤 브라우저가 refresh로 복구하는 것도 확인했다.
 - 실제 PC/휴대폰 미디어와 운영 HTTPS 검사는 미완료다. API 테스트 통과가 라이브 서비스 완료를 뜻하지 않는다.
+
+## 후속 수정: 테스트 자원 정리
+
+2026-11-07 재개 점검에서 `TestMain`의 `defer stopRedis()`가 `os.Exit` 때문에 실행되지 않는 결함을 발견했다. 이전 검증에서 만들어진 임시 Redis17개를 식별해 제거했고, 별도 사용 중인 Redis는 유지했다.
+
+pi는 준비·테스트·정리를 정상 반환하는 `runTests`로 옮기고 `TestMain`이 반환 코드만 전달하게 수정했다. 새 임시 컨테이너에는 `wbb.test` 라벨을 붙인다. Codex가 `TestBroadcastLifecycle` 성공과 PostgreSQL 연결을 의도적으로 실패시킨 경로를 검사했으며, 두 경우 모두 새로 남은 테스트 컨테이너는0개였다. 제품 인증·방송 동작에는 변경이 없다.

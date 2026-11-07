@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately). 같은 pi 세션에서는01과 동시 편집하지 않는다.
 
-**Status:** needs-info
+**Status:** in-progress
 
 **계약:** 실제 서비스 인증 통합은04에서 한다. 검증 endpoint를 공개 무인증 송출 서비스로 배포하지 않는다. 먼저 단일 rendition, 고정 버전, 실측 codec/manifest를 사용한다.
 
@@ -18,6 +18,6 @@
 
 **검증:** PC-01~04, MOB-01~03의 기술 관문. 보안 통합이 없으므로 제품 인수 완료는 아니다. 미디어 전제 실패 시 원인·대안을 Codex에 전달한다.
 
-**결과:** 구현 지시를 지정 pi에 전달했으나 GLM 제공자 오류로 시작하지 못했다. 2026-11-07 재시도에서 HTTP429/code1113 `Insufficient balance or no resource package`와 자동 재시도 실패를 확인했다. 실험 파일은 아직 생성되지 않았다. 사용자 측 GLM 리소스 복구 후 같은 pi 세션에서 재개한다. 구현 모델을 임의로 바꾸지 않는다.
+**결과:** 초기 구현 요청은 GLM 제공자의 HTTP429/code1113 오류로 시작하지 못했다. 2026-11-07 사용자가 패키지 복구를 알리고 재개를 요청했다. 지정된 기존 pi 세션에서 작업을 이어가며, 실제 산출물과 검증 결과를 확인한 뒤 완료 여부를 갱신한다.
 
 **재개 계획:** `experiments/media-single-rendition/`에 로컬 전용 검증 구성을 만든다. 우선 합성 canvas·오디오 입력으로 자동 검증하며, 실제 PC 공유·음성·휴대폰·외부망·VAAPI는 별도 미검증 상태로 유지한다. 검증용 HTML/JS는 제품 Flutter를 대체하지 않는다. MediaMTX1.21.3-ffmpeg ARM64 이미지 존재를 확인했으며, ICE 광고 포트와 Docker 공개 포트 번호를 일치시킨다. 실제 encoder·코덱·재생은 미검증이다.

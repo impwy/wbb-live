@@ -44,6 +44,14 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// os.Exit skips defers, so all setup/cleanup lives in runTests, which
+	// returns normally on every path (success and failure alike).
+	os.Exit(runTests(m))
+}
+
+// runTests prepares the disposable environment, runs the suite and cleans up
+// on every exit path. Containers created here carry the wbb.test label.
+func runTests(m *testing.M) (code int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -58,7 +66,7 @@ func TestMain(m *testing.M) {
 	redisAddr, stopRedis, err := startTestRedis()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "test redis: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer stopRedis()
 	testRedisAddr = redisAddr
@@ -67,45 +75,54 @@ func TestMain(m *testing.M) {
 	admin, err := pgxpool.New(ctx, adminURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cannot reach test PostgreSQL; run `make deps-up` first: %v\n", redactPGError(err))
-		os.Exit(1)
+		return 1
 	}
+	defer admin.Close()
+
 	suffix := make([]byte, 4)
 	_, _ = rand.Read(suffix)
 	dbName := "wbb_test_" + hex.EncodeToString(suffix)
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
 		fmt.Fprintf(os.Stderr, "create test database: %v\n", err)
-		os.Exit(1)
+		return 1
+	}
+	dropDB := func() {
+		_, _ = admin.Exec(context.Background(), "DROP DATABASE "+dbName+" WITH (FORCE)")
 	}
 	testDSN = strings.Replace(adminURL, "/postgres", "/"+dbName, 1)
 
 	testPool, err = pgxpool.New(ctx, testDSN)
 	if err != nil {
+		dropDB()
 		fmt.Fprintf(os.Stderr, "connect test database: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer testPool.Close()
 	if err := db.Migrate(ctx, testPool); err != nil {
+		dropDB()
 		fmt.Fprintf(os.Stderr, "migrate test database: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	testRedis = redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer testRedis.Close()
 	for attempt := 0; ; attempt++ {
 		if err := testRedis.Ping(ctx).Err(); err == nil {
 			break
 		} else if attempt >= 50 {
+			dropDB()
 			fmt.Fprintf(os.Stderr, "cannot reach test redis at %s: %v\n", redisAddr, err)
-			os.Exit(1)
+			return 1
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	code := m.Run()
+	code = m.Run()
 
-	testPool.Close()
-	_, _ = admin.Exec(context.Background(), "DROP DATABASE "+dbName+" WITH (FORCE)")
-	admin.Close()
+	testPool.Close() // close sessions before dropping the database
+	dropDB()
 	_ = testRedis.Close()
-	os.Exit(code)
+	return code
 }
 
 // startTestRedis returns an address of a disposable Redis: the explicit
@@ -115,7 +132,9 @@ func startTestRedis() (string, func(), error) {
 	if addr := os.Getenv("WBB_TEST_REDIS_ADDR"); addr != "" {
 		return addr, func() {}, nil
 	}
-	out, err := exec.Command("docker", "run", "-d", "--rm", "-p", "127.0.0.1::6379", "redis:7-alpine").Output()
+	out, err := exec.Command("docker", "run", "-d", "--rm",
+		"--label", "wbb.test",
+		"-p", "127.0.0.1::6379", "redis:7-alpine").Output()
 	if err != nil {
 		return "", nil, fmt.Errorf("starting disposable redis (docker required): %w: %s", err, strings.TrimSpace(string(out)))
 	}

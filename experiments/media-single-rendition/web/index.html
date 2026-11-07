@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WBB 미디어 스파이크 — 단일 품질 LL-HLS</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 16px; background: #14161a; color: #e6e6e6; max-width: 1000px; }
+    h1 { font-size: 18px; } h2 { font-size: 15px; margin-top: 24px; }
+    video { background: #000; width: 100%; max-width: 640px; border-radius: 6px; }
+    button { padding: 8px 14px; margin: 4px 4px 4px 0; border-radius: 6px; border: 1px solid #555;
+             background: #26292f; color: #e6e6e6; cursor: pointer; font-size: 14px; }
+    button:hover { background: #33363d; }
+    button:disabled { opacity: .4; cursor: default; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .state { font-family: ui-monospace, monospace; font-size: 13px; padding: 6px 10px;
+             border-radius: 6px; background: #1e2127; }
+    #log { font-family: ui-monospace, monospace; font-size: 12px; background: #101216;
+           border: 1px solid #2a2d33; border-radius: 6px; padding: 10px; height: 260px;
+           overflow-y: auto; white-space: pre-wrap; }
+    .warn { color: #e6b450; } .err { color: #e06c60; } .ok { color: #7ec699; }
+    small { color: #9aa0aa; }
+  </style>
+</head>
+<body>
+  <h1>WBB 미디어 스파이크 (티켓 02): 브라우저 WHIP → MediaMTX → FFmpeg 720p H.264/AAC → LL-HLS</h1>
+  <p><small>합성 모드는 canvas+오실레이터만 사용합니다(실제 화면/마이크 접근 없음).
+     실제 화면·마이크·카메라는 아래 수동 버튼으로 직접 선택할 때만 접근합니다.</small></p>
+
+  <h2>송출 (publish)</h2>
+  <div class="row">
+    <button id="btn-synth">합성 모드 시작 (canvas+oscillator)</button>
+    <button id="btn-screen">PC: 화면+탭소리+마이크 (WebAudio 믹스)</button>
+    <button id="btn-camera">모바일: 카메라+마이크</button>
+    <button id="btn-stop" disabled>송출 정지 (DELETE)</button>
+    <span class="state">WHIP: <span id="whip-state">idle</span></span>
+    <span class="state">ICE: <span id="ice-state">—</span></span>
+  </div>
+  <video id="preview" muted playsinline autoplay></video>
+  <p><small id="mix-note"></small></p>
+
+  <h2>시청 (LL-HLS, hls.js 로컬 번들)</h2>
+  <div class="row">
+    <button id="btn-play">재생</button>
+    <button id="btn-sound">소리 켜기</button>
+    <span class="state">hls.js: <span id="hls-state">—</span></span>
+    <span class="state">영상: <span id="video-info">—</span></span>
+  </div>
+  <video id="playback" controls muted playsinline></video>
+
+  <h2>검증 로그 (증거용 — 복사해서 기록)</h2>
+  <div id="log"></div>
+
+  <script src="vendor/hls.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

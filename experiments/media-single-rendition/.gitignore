@@ -1,0 +1,4 @@
+node_modules/
+bin/
+.spike-server.pid
+.spike-server.log

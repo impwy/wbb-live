@@ -10,7 +10,7 @@
 
 - [ ] PC 화면/탭+공유 소리+마이크가 Web Audio 단일 트랙으로 전달되고 별도 기기에서 두 음원을 구분해 듣는다.
 - [ ] 모바일 카메라·마이크가 별도 기기에서 보이고 들린다. 기기가 없으면 미검증으로 남긴다.
-- [ ] MediaMTX WHIP POST/Location/PATCH/DELETE와 명시적 ingress 종료 API를 확인한다.
+- [x] MediaMTX WHIP POST/Location/PATCH/DELETE와 명시적 ingress 종료 API를 loopback 합성 환경에서 확인했다. 외부망·제품 인증 통합은 별도다.
 - [ ] 실제 입력 codec→FFmpeg VAAPI1080/720/480 중 한 품질→H.264/AAC LL-HLS가 재생된다. 인코딩만 성공한 합성 테스트와 구분한다.
 - [ ] 권한 거절·공유 중지·부분 실패가 track/AudioContext/PeerConnection/변환 프로세스를 정리한다.
 - [ ] 외부망에서 ICE 경로를 확인하고 TURN 필요 여부·필요 포트를 비밀 없이 기록한다.
@@ -18,6 +18,13 @@
 
 **검증:** PC-01~04, MOB-01~03의 기술 관문. 보안 통합이 없으므로 제품 인수 완료는 아니다. 미디어 전제 실패 시 원인·대안을 Codex에 전달한다.
 
-**결과:** 초기 구현 요청은 GLM 제공자의 HTTP429/code1113 오류로 시작하지 못했다. 2026-11-07 사용자가 패키지 복구를 알리고 재개를 요청했다. 지정된 기존 pi 세션에서 작업을 이어가며, 실제 산출물과 검증 결과를 확인한 뒤 완료 여부를 갱신한다.
+**결과:** 2026-11-08 02:57 KST 재개 요청 후 지정 pi GLM의 실제 작업 시작을 확인했다. 이전 01:57 요청의429/1308과 달리 구현·수정이 수행됐다. pi와 Codex의 독립 전체 실행은 각각83통과·건너뜀0·실패0이다. Chrome H.264/AAC preflight, MSE 우선 및 native 실패 처리, 공유 중지 경합, 합성·PC destination 트랙 정리, 혼합 gain, 원래 FFmpeg 종료와6초 관측을 확인했다. 별도 verify.sh는 H.2641280×720/AAC를 검증했고, 관리 API 강제 종료200·source/output 비활성·세션0·동일 세션 재종료404를 관측했다. 합성/모의 결과이며 실제 기기 관문은 완료하지 않았다.
 
-**재개 계획:** `experiments/media-single-rendition/`에 로컬 전용 검증 구성을 만든다. 우선 합성 canvas·오디오 입력으로 자동 검증하며, 실제 PC 공유·음성·휴대폰·외부망·VAAPI는 별도 미검증 상태로 유지한다. 검증용 HTML/JS는 제품 Flutter를 대체하지 않는다. MediaMTX1.21.3-ffmpeg ARM64 이미지 존재를 확인했으며, ICE 광고 포트와 Docker 공개 포트 번호를 일치시킨다. 실제 encoder·코덱·재생은 미검증이다.
+**다음 순서(구현은 기존 pi GLM):**
+
+1. `docs/reviews/02-media-spike.md`와 `docs/verification/02-media-spike.md`의 로컬 수정·독립 검증 결과를 기준으로 진행한다. 로컬 체크포인트 통합과 티켓02 전체 완료를 구분한다.
+2. 실제 PC의 화면+탭/시스템 소리+마이크, 휴대폰 카메라+마이크를 별도 물리 기기에서 확인하고 시작·시청·종료·권한 거절 결과를 남긴다. 실제 캡처·청취는 사용자와 함께 진행해야 한다.
+3. Labtop VAAPI 단일 품질, 안전한 HTTPS 접근, 외부망 ICE/NAT/TURN과 Safari 재생을 확인한다. 인증 없는 현재 loopback 실험을 그대로 공개하지 않는다.
+4. 실제02 관문 충족 전03 ABR 및04 제품 송출 통합을 완료로 처리하지 않는다. HTML/JS 실험은 Flutter 제품 UI를 대체하지 않는다.
+
+현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 로컬 합성 검사 성공을 실제 두 기기·VAAPI·외부망 성공으로 표시하지 않는다.

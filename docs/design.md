@@ -40,7 +40,8 @@ API/worker/media/infra ─ OTel·Alloy ─ Loki·Tempo·Mimir ─ Grafana
 | auth_session_families | id, user_id, revoked_at. 회전·로그아웃·재사용 탐지가 같은 행 잠금을 사용하며 계열 전체의 폐기를 판정 |
 | auth_sessions | id, user_id, refresh_token_hash, refresh_family_id, expires_at, revoked_at, rotation 정보. 원문 토큰 저장 금지 |
 | broadcasts | id, owner_id, title(1~100자), description(0~2000자), version, created_at, updated_at, deleted_at |
-| broadcast_sessions | id, broadcast_id, publisher_auth_session_id, state, version, media_generation, 시작/종료/heartbeat 시각, end_reason, ingest_connection_id, worker_lease_until |
+| broadcast_sessions | id, broadcast_id, publisher_auth_family_id, initial_auth_session_id(감사용), state, version, media_generation, 시작/종료/heartbeat 시각, end_reason, ingest_connection_id, worker_lease_until |
+| media_create_operations | id, broadcast_session_id, media_generation, grant_jti, state(pending/attached/cleanup_pending/closed), upstream_connection_id, created_at, resolved_at |
 | outbox_events | event_id, aggregate_id, aggregate_version, type, occurred_at, payload, traceparent, published_at, attempts |
 | consumer_inbox | consumer_name, event_id, processed_at. 두 컬럼 복합 유일 |
 
@@ -58,7 +59,8 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 - OAuth callback은 access token을 URL로 내보내지 않는다. 서버가 refresh 쿠키를 설정하고 고정된 프런트엔드 경로로 이동한 뒤 refresh API로 access token을 받는다. 인증 code/state/토큰이 Caddy·API 로그에 남지 않게 해당 경로의 query를 제거한다.
 - 서버가 JWT subject에서 방송 owner를 결정한다. 요청의 ownerId는 받지 않는다. 수정·삭제·시작·종료·송출 인증마다 DB owner를 검사한다. anonymous401, 다른 사용자403, 없는/삭제된 방송404, 충돌409다.
 - 로그인·가입·refresh에는 IP 및 계정 단위 제한을 적용한다. Redis 장애 시 인증이 필요한 보호 API는503으로 거절(fail closed)하고 익명 목록·시청은 계속 제공한다. Redis의 active sid만으로 허용하지 않고 PostgreSQL auth_sessions의 revoked_at·expires_at을 항상 최종 판정한다. 캐시 삭제 실패나 늦은 재적재로 폐기된 인증이 부활할 수 없어야 한다. 실제 사용자 IP는 신뢰하는 프록시에서만 전달받는다.
-- 로그아웃은 해당 로그인 세션이 시작한 활성 회차를 STOPPING으로 전환하고 인증 세션을 폐기하는 DB 트랜잭션이다. 미디어 종료 실패와 무관하게 인증은 폐기하고 종료 작업을 재시도한다. UI도 모든 로컬 트랙을 닫는다.
+- 송출의 로그인 식별자는 refresh 회전으로 바뀌는 개별 sid가 아니라 `auth_session_family_id`다. 현재 유효한 sid의 family를 서버에서 확인한다. 최초 sid는 감사용이며 정상 refresh가 방송을 끊지 않는다. resource의 PATCH/DELETE는 동일 family를 요구한다. 별도 로그인한 동일 owner도 방송 stop API로 자신의 회차를 종료할 수 있다.
+- 로그아웃·refresh 재사용 폐기는 해당 family가 시작한 활성 회차를 STOPPING으로 전환하고 family를 폐기하는 DB 트랜잭션이다. 미디어 종료 실패와 무관하게 인증은 폐기하고 종료 작업을 재시도한다. UI도 모든 로컬 트랙을 닫는다.
 
 ## 5. HTTP 계약
 
@@ -94,6 +96,8 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 
 Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저장한다. 같은 키/같은 입력은 동일 회차로 응답하고, 같은 키/다른 입력은409다. 다른 키로 활성 회차를 중복 시작해도409다. 이미 송출 중인 회차에 새 publish grant를 발급해 두 번째 송출자가 기존 연결을 탈취하게 하지 않는다. grant가 만료된 STARTING 회차만 갱신할 수 있다.
 
+시작 재응답은 새 회차나 새 grant를 만들지 않는다. 원래 로그인 family의 요청이며 회차가 STARTING이고 원래 jti가 미폐기·미소비·미만료일 때만 동일 자격을 반환한다. 다른 family의 같은 키 요청은403이다. STOPPING/ENDED 또는 폐기된 jti는 `publishGrant:null,publishGrantState:"unavailable"`을 반환한다. 소비·만료·생성 중이면 `publishGrant:null`과 `publishGrantState`(`consumed`/`expired`/`pending`)를 반환한다. grant 원문을 로그에 남기지 않는다. 갱신 endpoint는 같은 로그인 family, STARTING, 준비 제한 이전, 이전 grant 만료, 미해결 생성 작업 없음 조건을 모두 검사한다. 이전 jti를 폐기하고 새 jti를 원자적으로 발급한다.
+
 ## 6. 송출 회차 상태와 종료
 
 | 현재 상태 | 사건 | 다음 상태 / 처리 |
@@ -102,11 +106,13 @@ Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저�
 | STARTING | ingress 연결 + 미디어 출력 준비 확인 | LIVE |
 | STARTING | 60초 준비 제한, 사용자 취소, 장치 오류 | STOPPING |
 | LIVE | 종료 요청, 공유 트랙 종료, 로그인 세션 폐기 | STOPPING |
-| STARTING/LIVE | ingress 유실 연속15초 | STOPPING |
-| STOPPING | ingress 없음 + 변환 프로세스 없음 확인 | ENDED |
+| STARTING/LIVE | 최초 ingress 관찰 이후 유실 연속15초 | STOPPING |
+| STOPPING | 미해결 생성 작업 없음 + ingress 없음 + 변환 프로세스 없음 확인 | ENDED |
 | ENDED | 모든 늦은 ready 이벤트 | 무시; 재시작은 새 회차 |
 
 위60초/15초는 초기 설정값이며 실측으로 조정한다. 상태 전이는 조건부 UPDATE와 회차 version으로 보호한다. LIVE 승인은 단순 HTTP 시작 성공이 아니라 실제 ingest와 지원 rendition의 유효한 manifest/segment를 관찰한 경우다. 상태·outbox 기록은 같은 DB 트랜잭션이다.
+
+준비 제한은 회차 생성 시각부터60초이며 grant 갱신으로 연장하지 않는다. 최초 ingress 연결 전에는15초 유실 제한을 적용하지 않는다. 초기 grant TTL은30초(상한120초), 실제 만료는 준비 제한을 넘지 않는다. 준비 제한 경과 후에는 이전 회차를 정리하고 새 회차로 재시도한다.
 
 종료 절차는 다음 순서로 실행한다.
 
@@ -119,9 +125,11 @@ Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저�
 
 API/worker 시작 시 및 주기5초마다 활성 회차와 실제 미디어 상태를 대조한다. worker lease는 단일 소유권을 보장하되 시간이 지난 lease를 인계할 수 있어야 한다. 콜백은 private network 인증을 거치고 `session_id, media_generation, connection_id`와 현재 상태를 검사한다. 중복·역순 이벤트는 무해해야 한다. DB 재시작 후 연결이 남은 경우에도 검증 없이 ENDED→LIVE로 바꾸지 않는다.
 
+WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 작업을 DB에 예약한다. 회차별 미해결 생성 작업은 하나만 허용하고 동일 grant의 동시 POST는409로 거절한다. STOPPING 이후 도착한 생성 성공은 클라이언트에 공개하지 않고 해당 연결만 정리한다. 응답 유실·프로세스 재시작으로 결과가 불명확하면 회차 전용 미디어 경로와 제어 API로 확인한다. 생성 결과와 정리가 해결되기 전에는 새 생성 및 ENDED 확정을 금지한다. 이 최소 재조정은04에 포함하며07의 Kafka 작업까지 미루지 않는다.
+
 ## 7. WHIP 인증과 브라우저 캡처
 
-publish grant는 로그인 JWT와 별개이며 `aud=publish`, 회차·방송자·로그인 세션·generation에 묶인 최대120초 자격이다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 인증 세션·owner·회차 상태를 확인한다. 생성한 resource는 서버에 owner·로그인 세션·회차로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로120초 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
+publish grant는 로그인 JWT와 별개이며 `aud=publish`, 고유 jti, 회차·방송자·로그인 family·generation에 묶인 단기 일회성 자격이다. TTL은 §6을 따른다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 family 활성 상태·owner·회차 상태를 확인하고 생성 작업을 예약한다. family 활성은 DB에서 family가 미폐기이며 그 family에 현재 비폐기·미만료 auth session이 존재하는 것으로 판정한다. 최초 sid의 만료로 정상 회전 후 권한을 끊지 않는다. 생성한 resource는 서버에 owner·family·회차·generation으로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
 
 MediaMTX ingress endpoint는 외부 직접 노출하지 않는다. 외부 인증 콜백을 통해 회차의 활성 여부를 재검사하고 두 번째 publisher가 첫 publisher를 교체하지 못하게 설정한다. FFmpeg의 내부 read/publish 자격과 브라우저 grant는 분리하고 최종 rendition 경로에 브라우저가 직접 publish하지 못하게 한다. 버전별 WHIP Location/PATCH/DELETE와 MediaMTX 연결 종료 API 지원은 02번 검증에서 확인하고 어댑터에 가둔다. 외부 HTTP 인증의 action/path 검사는 [MediaMTX 인증 문서](https://mediamtx.org/docs/features/authentication)를 기준으로 한다(2026-11-06 확인).
 

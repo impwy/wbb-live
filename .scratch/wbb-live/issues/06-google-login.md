@@ -6,13 +6,15 @@
 
 **Status:** ready-for-agent
 
-**실행 가능 여부:** 선행 미완료로 blocked. 실제 Google 설정이 없으면 통합 완료가 아닌 외부 설정 미완료로 기록한다.
+**실행 가능 여부:** 선행01 완료로 진행 가능. 티켓02의 실제 기기 검증과 독립적으로 구현할 수 있다. 실제 Google 설정이 없으면 통합 완료가 아닌 외부 설정 미완료로 기록한다.
 
 - [ ] Code+PKCE/state/nonce, 정확한 callback, issuer/audience/expiry/subject 검증을 적용한다.
 - [ ] 서버에서 토큰을 교환하고 URL에 자체 access token을 넣지 않는다. callback query와 자격이 로그에 남지 않는다.
 - [ ] 같은 이메일의 기존 계정과 자동 연결하지 않고 충돌을 사용자에게 안내한다.
 - [ ] Flutter Google 버튼→callback→인증 복원→방송 생성→로그아웃이 연결된다.
 - [ ] 변조 state/nonce/issuer/audience, 중복 callback, 외부 redirect 입력을 거절하는 API 검사와 실제 Google 로그인 결과를 구분한다.
+
+**상세 계약:** `docs/google-login-contract.md`. 브라우저 결합·일회성 callback·identity 동시성·Flutter 직접 완료 경로와 기존 nullable password_hash 회귀를 포함한다.
 
 **검증:** AUTH-01~03. 테스트 provider 성공을 실제 Google 성공이라고 하지 않는다.
 

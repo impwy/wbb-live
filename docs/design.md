@@ -153,7 +153,7 @@ WebRTC 미디어는 Caddy HTTP 경로와 별도다. UDP ICE 포트, 필요 시 T
 - rendition readiness/실패를 master 갱신에 반영하며, 최신 목록에 없는 품질을 플레이어가 계속 요청하지 않도록 복구하는가.
 - MediaMTX 단독 복수 경로로 안정된 ABR이 불가능하면 결과와 필요한 packager 변경을 Codex에 보고한다. 검증 없이 FFmpeg 기본 HLS 출력을 LL-HLS라고 부르거나 멀티 비트레이트 완료로 표시하지 않는다. 한 품질 검증은 필수 라이브 기능의 중간 성과로 기록할 수 있으나 ABR 인수 완료가 아니다.
 
-브라우저는 지원되는 경우 native HLS, 그 외 hls.js를 Flutter HTML view에 붙인다. 자동재생 거절 시 재생/소리 켜기 버튼을 제공한다. quality=auto와 검증된 고정 품질을 제공하고 시청 화면은 비로그인으로 열린다. manifest/segment는 public URL이어도 session 상태 gate를 거친다. 캐시로 종료 후 gate를 우회하지 않도록 no-store를 기본으로 하고 CDN은 사용하지 않는다. Caddy 프록시는 LL-HLS 요청의 query를 유지하며 blocking reload를 임의 버퍼링·짧은 timeout으로 깨뜨리지 않는다.
+제품 플레이어는 실제 검증한 브라우저별 재생 경로를 Flutter HTML view에 붙인다. 로컬 실험의 Chrome은 native HLS 지원 응답과 달리 실제 재생이 실패해 hls.js/MSE를 우선 사용한다. Safari native HLS 정책은 실제 기기 검증 후 확정하며, 지원 여부 문자열만으로 재생 가능하다고 판정하지 않는다. 이 실험 결과가 제품 Flutter 플레이어 구현 완료를 뜻하지 않는다. 자동재생 거절 시 재생/소리 켜기 버튼을 제공한다. quality=auto와 검증된 고정 품질을 제공하고 시청 화면은 비로그인으로 열린다. manifest/segment는 public URL이어도 session 상태 gate를 거친다. 캐시로 종료 후 gate를 우회하지 않도록 no-store를 기본으로 하고 CDN은 사용하지 않는다. Caddy 프록시는 LL-HLS 요청의 query를 유지하며 blocking reload를 임의 버퍼링·짧은 timeout으로 깨뜨리지 않는다.
 
 ## 9. Kafka·복구·영속성
 

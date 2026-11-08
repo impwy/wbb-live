@@ -28,3 +28,5 @@
 4. 실제02 관문 충족 전03 ABR 및04 제품 송출 통합을 완료로 처리하지 않는다. HTML/JS 실험은 Flutter 제품 UI를 대체하지 않는다.
 
 현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 로컬 합성 검사 성공을 실제 두 기기·VAAPI·외부망 성공으로 표시하지 않는다.
+
+**VAAPI 후속:** `02-media-vaapi-followup.md`에서 GPU 컨테이너·SSH TCP ICE 브라우저 경로를 진행 중이다. 실제 스트림과 Python 종료 검사 자체의 독립 성공은 확인했지만 자동 검증기 연결·정리 도구 수정이 남았고 GLM 한도로 대기 중이다. 로컬 CPU83항목 결과와 별개로 기록한다.

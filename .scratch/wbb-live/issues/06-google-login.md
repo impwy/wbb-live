@@ -20,4 +20,4 @@
 
 **결과:** 최종 스냅샷f1ba363 자동 검증과 두 축 리뷰 통과. 실제PG/Redis 공개HTTP 전체race·vet·호출경로취약점검사, callback/azp 독립red→green, Flutter공식27+독립9=36개, analyze·release build를 확인했다. [검증](../../../docs/verification/06-google-login.md)과 [리뷰](../../../docs/reviews/06-google-login.md)를 따른다.
 
-**남은 인수:** 실제 Google Console 자격으로 동일 출처 브라우저에서 로그인·취소·충돌·로그아웃 확인. 테스트 provider 성공과 구분하며 이 관문 전에는 done으로 바꾸지 않는다. 22:45 KST pi 재확인도429/1308이었다. 대체 Codex 담당을 유지하며23:45 KST에 한 번 재확인한다. 자동 검증이 완료된 구현을 중복 실행하지 않는다.
+**남은 인수:** 실제 Google Console 자격으로 동일 출처 브라우저에서 로그인·취소·충돌·로그아웃 확인. 테스트 provider 성공과 구분하며 이 관문 전에는 done으로 바꾸지 않는다. 23:45 KST pi 정상 응답과 대체 Codex 편집 중단 확인 후 지정 pi가 체크포인트를 인수했다. 추가 구현 없이 실제 인수 관문 대기이며 추가 한도 재확인 예약은 없다.

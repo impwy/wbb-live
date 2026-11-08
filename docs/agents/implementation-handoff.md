@@ -7,11 +7,11 @@
 - 기본 구현: AGENTS.md에 지정된 기존 pi 세션. 마지막 pane `%10`.
 - 대체 구현 Codex: `01a1b9eb-ab52-76c0-a413-ba3cb523ec9e`, 마지막 pane `%12`. 새 세션을 만들거나 기존 세션의 모델을 임의 변경하지 않는다.
 - 조정·설계·리뷰·독립 검증: 이 대화의 Codex. 대체 구현자와 같은 사람이 자기 변경의 독립 리뷰를 대신하지 않는다.
-- 현재 구현 담당: 지정 대체 Codex, 편집 종료·인수 대기. 2026-11-08 22:45 KST pi 상태 확인은 다시429/1308(reset22:40:38, 시간대미표기)이었다. 현재 수정할 새 결함은 없으며 대기 상태를 실패로 해석하지 않는다.
-- 현재 브랜치: `work/google-login`, 제품 체크포인트 `226fefd`. [Draft PR3](https://github.com/impwy/wbb-live/pull/3)는 `work/media-vaapi`를 base로 하며 backend/frontend CI가 통과했다. 22:45 재확인 전 git은 깨끗했고 제품 변경은 없었다.
+- 현재 구현 담당: 지정 pi GLM, 인수 완료·대기. 2026-11-08 23:45 KST 정상 응답, 대체 Codex의 명시적 편집 중단·인계 가능 보고, pi의 체크포인트/문서 읽기와 “인수 완료, 추가 구현 없이 대기” 응답을 확인했다. 제품226fefd·문서958c6fe를 인수했으며 새 수정 사항이 없어 구현을 중복 시작하지 않았다. 대체 Codex는 편집 중단 상태다.
+- 현재 브랜치: `work/google-login`, 제품 체크포인트 `226fefd`. [Draft PR3](https://github.com/impwy/wbb-live/pull/3)는 `work/media-vaapi`를 base로 하며 backend/frontend CI가 통과했다. 23:45 재확인 전 git은 깨끗했고 제품 변경은 없었다. 운영 문서 커밋958c6fe만 원격보다 앞서 있었다.
 - VAAPI 후속: `0f9d8d0`, [Draft PR2](https://github.com/impwy/wbb-live/pull/2). 격리 GPU 자동검증은 통과했지만 부모02의 실제 기기·외부망 관문은 유지한다.
 - 티켓06: 최종 스냅샷 `f1ba363`의 독립HTTP·Flutter36개·두 축 리뷰·빌드를 통과했다. `docs/reviews/06-google-login.md`, `docs/verification/06-google-login.md`를 따른다. 실제 Google 자격 로그인 인수가 남아in-review이며 테스트 provider 성공으로 대체하지 않는다.
-- 다음 pi 확인: 2026-11-08 23:45 KST, 일회성. 제공자 reset 시간만으로 복구를 추정하지 않는다. 새 미완료 수정이 없으면 복구 후에도 체크포인트 인수·남은 관문 확인만 하고 대기한다. 실제 기기02와 사용자 설정 없이 후속 선행 조건을 우회하지 않는다.
+- 23:45 KST 일회성 재확인은 완료했고 실제 정상 응답으로 복구를 확인했다. 추가 재확인 예약은 없다. 현재는 체크포인트 인수·남은 관문 확인 후 대기하며 실제 기기02와 사용자 설정 없이 후속 선행 조건을 우회하지 않는다.
 - 원본 문서·커밋·PR 관리는 조정자가 맡는다. 정상 완료 후 대기를 이유로 중복 구현을 시작하지 않는다.
 
 ## pi에서 대체 Codex로

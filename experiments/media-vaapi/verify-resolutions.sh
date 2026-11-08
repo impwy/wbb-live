@@ -32,9 +32,13 @@ check_case() {
   ok=0; i=0
   while [ $i -lt 20 ]; do
     sleep 2; i=$((i + 1))
-    in=$(docker compose exec -T mediamtx ffprobe -v error -of csv=p=0 \
+    if in=$(timeout -k 2 20 docker compose exec -T mediamtx timeout 15 ffprobe -v error -of csv=p=0 \
       -show_entries stream=codec_name,codec_type,width,height \
-      rtsp://127.0.0.1:8554/spike/source 2>/dev/null || true)
+      rtsp://127.0.0.1:8554/spike/source 2>/dev/null); then :; else
+      rc=$?
+      case $rc in 124|137|143) echo "입력 ffprobe 시간 초과/강제 종료 (rc=$rc)" >&2; exit 1 ;; esac
+      in=""
+    fi
     if printf '%s\n' "$in" | grep -q "h264,video,${W},${H}"; then ok=1; break; fi
   done
   if [ "$ok" != "1" ]; then
@@ -47,9 +51,13 @@ check_case() {
   ok=0; i=0
   while [ $i -lt 20 ]; do
     sleep 2; i=$((i + 1))
-    out=$(docker compose exec -T mediamtx ffprobe -v error -of csv=p=0 \
+    if out=$(timeout -k 2 20 docker compose exec -T mediamtx timeout 15 ffprobe -v error -of csv=p=0 \
       -show_entries stream=codec_name,codec_type,width,height \
-      http://127.0.0.1:8888/spike/720p/index.m3u8 2>/dev/null || true)
+      http://127.0.0.1:8888/spike/720p/index.m3u8 2>/dev/null); then :; else
+      rc=$?
+      case $rc in 124|137|143) echo "출력 ffprobe 시간 초과/강제 종료 (rc=$rc)" >&2; exit 1 ;; esac
+      out=""
+    fi
     nv=$(printf '%s\n' "$out" | grep -c "h264,video,${EW},${EH}" || true)
     allv=$(printf '%s\n' "$out" | grep -c "h264,video" || true)
     na=$(printf '%s\n' "$out" | grep -c "aac,audio" || true)

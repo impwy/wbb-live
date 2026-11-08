@@ -36,7 +36,7 @@ grep -q "CAN-BLOCK-RELOAD=YES" "$TMP/media.m3u8" && echo "LL-HLS: CAN-BLOCK-RELO
 echo
 
 echo "== 코덱/해상도 (ffprobe JSON; VAAPI 출력) =="
-docker compose exec -T mediamtx ffprobe -v error -of json -show_streams http://127.0.0.1:8888/spike/720p/index.m3u8 > "$TMP/streams.json" \
+timeout -k 2 25 docker compose exec -T mediamtx timeout 20 ffprobe -v error -of json -show_streams http://127.0.0.1:8888/spike/720p/index.m3u8 > "$TMP/streams.json" \
   || { echo "ffprobe 실패" >&2; exit 1; }
 python3 - "$TMP/streams.json" <<'PY' || { echo "코덱/해상도 검사 실패" >&2; exit 1; }
 import json, sys
@@ -54,8 +54,8 @@ for s in audios:
 PY
 
 echo "== 오디오 비영 (PCM decode) =="
-docker compose exec -T mediamtx sh -c \
-  "ffmpeg -v error -i http://127.0.0.1:8888/spike/720p/index.m3u8 -map 0:a:0 -t 3 -f s16le -" > "$TMP/audio.pcm" \
+timeout -k 2 25 docker compose exec -T mediamtx timeout 20 ffmpeg -v error \
+  -i http://127.0.0.1:8888/spike/720p/index.m3u8 -map 0:a:0 -t 3 -f s16le - > "$TMP/audio.pcm" \
   || { echo "PCM 디코드 실패" >&2; exit 1; }
 python3 - "$TMP/audio.pcm" <<'PY' || { echo "오디오 침묵" >&2; exit 1; }
 import struct, sys

@@ -9,7 +9,10 @@ cd "$(dirname "$0")"
 echo "== 이미지/패키지 기록 =="
 docker compose build transcoder
 docker image inspect wbb-media-vaapi/transcoder:alpine3.24 --format 'transcoder image id: {{.Id}}'
-docker inspect alpine:3.24 --format 'base alpine:3.24 digest: {{index .RepoDigests 0}}'
+BASE_REF=$(awk '$1 == "FROM" { print $2; exit }' Dockerfile.transcoder)
+case "$BASE_REF" in alpine:3.24@sha256:*) ;; *) echo "고정 Alpine 기반 참조가 아닙니다: $BASE_REF" >&2; exit 1 ;; esac
+echo "Dockerfile fixed base reference: $BASE_REF"
+docker image inspect wbb-media-vaapi/transcoder:alpine3.24 --format 'transcoder created: {{.Created}} architecture: {{.Architecture}} os: {{.Os}}'
 docker run --rm wbb-media-vaapi/transcoder:alpine3.24 -c \
   'apk list --installed 2>/dev/null | grep -E "^(ffmpeg|intel-media-driver|libva|libva-utils)-" | cut -d" " -f1'
 

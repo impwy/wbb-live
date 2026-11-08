@@ -26,7 +26,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATE = "/tmp/wbb-media-vaapi-term"
 
 results = []
 def check(name, ok, detail=""):
@@ -38,6 +37,7 @@ DOCKER_STUB = r"""#!/bin/sh
 # Controlled by $STUB_DIR/env (written by the harness before each scenario).
 . "$STUB_DIR/env"
 if [ "$STUB_FAIL_EXEC" = "1" ]; then exit 17; fi
+case "$*" in *"/proc/"*"/stat"*) if [ "$STUB_FAIL_STAT" = "1" ]; then exit 18; fi ;; esac
 case "$*" in
   *"ps -q transcoder"*) echo "$STUB_CT" ;;
   *pidof*ffmpeg*)
@@ -127,6 +127,7 @@ def run_scenario(tmp, name, mode, args, expect_rc_zero, timeout=30):
         "WBB_TERM_CONV_LIMIT": "3",
         "WBB_TERM_WINDOW": "1",
         "WBB_TERM_INTERVAL": "0.3",
+        "WBB_TERM_STATE": os.path.join(tmp, "state"),
     })
     env.update({k: str(v) for k, v in mode.get("env", {}).items()})
     StubHandler.paths_mode = mode.get("paths", "ready")
@@ -148,6 +149,7 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
     tmp = tempfile.mkdtemp(prefix="wbb-term-selftest-")
+    state = os.path.join(tmp, "state")
     os.makedirs(tmp + "/bin")
     stub = tmp + "/bin/docker"
     with open(stub, "w") as f:
@@ -159,26 +161,26 @@ def main():
             for k, v in kv.items():
                 f.write(f'{k}="{v}"\n')
 
-    happy_env = dict(STUB_FAIL_EXEC=0, STUB_CT="ct123", STUB_PIDS="712",
+    happy_env = dict(STUB_FAIL_EXEC=0, STUB_FAIL_STAT=0, STUB_CT="ct123", STUB_PIDS="712",
                      STUB_STAT_712="51634677")
-    for suffix in ("", ".ct", ".url"):
-        try: os.remove(STATE + suffix)
-        except FileNotFoundError: pass
-
     # 1. exec failure during before -> FAIL (no state published).
     set_env(**{**happy_env, "STUB_FAIL_EXEC": 1})
     run_scenario(tmp, "T1 exec-fail in before fails", {}, "before", expect_rc_zero=False)
-    check("T1 state not published", not os.path.exists(STATE))
+    check("T1 state not published", not os.path.exists(state))
 
     # 2. happy before -> PASS.
     set_env(**happy_env)
     StubHandler.playlist_mode = "progressing"
     run_scenario(tmp, "T2 happy before passes", {"playlist": "progressing"}, "before", expect_rc_zero=True)
-    check("T2 state published", os.path.exists(STATE) and os.path.exists(STATE + ".ct"))
+    check("T2 state published", os.path.exists(state) and os.path.exists(state + ".ct"))
 
     # 3. exec failure during after -> FAIL.
     set_env(**{**happy_env, "STUB_FAIL_EXEC": 1})
     run_scenario(tmp, "T3 exec-fail in after fails", {}, "after", expect_rc_zero=False)
+
+    # compose ps succeeds; the original PID's direct /proc read fails.
+    set_env(**{**happy_env, "STUB_FAIL_STAT": 1})
+    run_scenario(tmp, "T3b original PID stat exec-fail fails", {}, "after", expect_rc_zero=False)
 
     # 4. original encoder never dies -> convergence timeout FAIL.
     set_env(**happy_env)

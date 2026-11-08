@@ -2,7 +2,7 @@
 
 티켓02 후속이다. 기존 CPU 실험의 웹 helper를 재사용해 Chrome 합성 WHIP → SSH TCP ICE → Labtop의 Intel GPU H.264/AAC 변환 → LL-HLS를 검사한다. 제품 Flutter·인증 통합 및 운영 배포가 아니다.
 
-**현재 미완료:** 브라우저 자동 검증기가 삭제된 `verify-termination.sh`를 참조한다. 원격에 남은 옛 파일을 이용한 pi의13/13 결과는 깨끗한 현재 코드의 전체 통과 증거가 아니다. 종료 검사는 `verify-termination.py`로 바뀌었으며 호출부 수정·독립 재실행이 필요하다. 상세 지적과 상태는 [리뷰](../../docs/reviews/02-media-vaapi.md)를 따른다.
+**현재 범위:** 깨끗한 원격 복사에서 단일 품질 자동 검사를 다시 실행했다. 실제 기기·외부망·Safari·ABR 인수는 남아 있다. 상세 검증 결과와 리뷰 상태는 [검증 기록](../../docs/verification/02-media-vaapi.md)과 [리뷰](../../docs/reviews/02-media-vaapi.md)를 따른다.
 
 ## 구성과 준비
 
@@ -24,7 +24,7 @@ ssh Labtop 'cd /tmp/wbb-media-vaapi && ./preflight.sh'
 ssh Labtop 'cd /tmp/wbb-media-vaapi && ./start.sh'
 ```
 
-현재 preflight의 별도 `alpine:3.24` 로컬 태그 조회는 깨끗한 BuildKit 환경에서 실패할 수 있어 수정 대기 중이다. 실패 시 성공으로 취급하거나 다음 명령을 계속하지 않는다.
+preflight는 Dockerfile의 고정 `FROM` 참조와 생성된 이미지 ID·생성 시각·아키텍처·패키지 버전을 기록한다. 별도 로컬 Alpine 태그는 요구하지 않는다.
 
 서버 내부 합성 검사(실제 브라우저 WHIP와 별도):
 
@@ -57,9 +57,9 @@ Chrome에서 `http://127.0.0.1:8090`을 연다. [수동 테스트 방법](../../
 
 ## 자동 검사와 종료 증거
 
-`python3 selftest-termination.py`는 모의 실패 주입 검사다. 현재 실제 verifier와 상태 파일 경로를 공유하는 결함이 있으므로 실제 before/after 사이에 실행하지 않는다. 별도 임시 상태 경로로 분리하는 수정이 필요하다.
+`python3 selftest-termination.py`는 모의 실패 주입 검사다. 임시 상태 경로를 사용하므로 실제 before/after 상태를 변경하지 않는다.
 
-브라우저 자동 검사 준비는 이 폴더에서 `npm ci` 후 `npm run verify`다. 현재 호출부 결함으로 깨끗한 환경의 마지막 종료 검사가 실패하므로 전체 성공으로 표시하지 않는다. pi가 생성한 package-lock은 Codex가 게시 대상에 포함했다.
+브라우저 자동 검사 준비는 이 폴더에서 `npm ci` 후 `npm run verify`다. 로컬8888/8889가 기존 서비스에 점유된 경우 별도 SSH 포워딩을 만들고 `WBB_VAAPI_HLS_PORT`, `WBB_VAAPI_WHIP_PORT`를 지정한다. 새 원격 복사 경로에는 `WBB_VAAPI_REMOTE_DIR`을 지정한다. 예를 들어 18888/18889로 포워딩하고 원격 디렉터리가 `/tmp/wbb-media-vaapi-followup-clean`이면 `WBB_VAAPI_HLS_PORT=18888 WBB_VAAPI_WHIP_PORT=18889 WBB_VAAPI_REMOTE_DIR=/tmp/wbb-media-vaapi-followup-clean npm run verify`다.
 
 기존 Python 종료 검사를 별도로 확인하려면 활성 송출 중 다음 before를 수행하고, **그 뒤** 브라우저에서 중지한 후 after를 실행한다.
 

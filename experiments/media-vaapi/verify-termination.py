@@ -19,7 +19,7 @@ Env overrides (for the error-injection selftest):
   WBB_TERM_API_BASE (default http://127.0.0.1:19990)
   WBB_TERM_HLS_BASE (default http://127.0.0.1:18888)
   WBB_TERM_CONV_LIMIT (default 10), WBB_TERM_WINDOW (default 6),
-  WBB_TERM_INTERVAL (default 2)
+  WBB_TERM_INTERVAL (default 2), WBB_TERM_STATE (default path below)
 """
 import json
 import os
@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 
-STATE = "/tmp/wbb-media-vaapi-term"
+STATE = os.environ.get("WBB_TERM_STATE", "/tmp/wbb-media-vaapi-term")
 API_BASE = os.environ.get("WBB_TERM_API_BASE", "http://127.0.0.1:19990")
 HLS_BASE = os.environ.get("WBB_TERM_HLS_BASE", "http://127.0.0.1:18888")
 CONV_LIMIT = float(os.environ.get("WBB_TERM_CONV_LIMIT", "10"))
@@ -47,7 +47,7 @@ def dexec(cmd: str) -> str:
     """docker compose exec with explicit failure propagation."""
     proc = subprocess.run(
         ["docker", "compose", "exec", "-T", "transcoder", "sh", "-c", cmd],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=10,
     )
     if proc.returncode != 0:
         fail(f"조회 오류(transcoder: {cmd}): rc={proc.returncode} {proc.stderr.strip()[:200]}")
@@ -57,7 +57,7 @@ def dexec(cmd: str) -> str:
 def compose_ps_q(service: str) -> str:
     proc = subprocess.run(
         ["docker", "compose", "ps", "-q", service],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=10,
     )
     if proc.returncode != 0:
         fail(f"compose ps -q {service} 실패: {proc.stderr.strip()[:200]}")
@@ -122,7 +122,8 @@ def orig_check(pid: str, starttime: str) -> str:
 
 
 def current_encoder():
-    pid = dexec("pidof ffmpeg 2>/dev/null").split()[0] if dexec("pidof ffmpeg 2>/dev/null").split() else None
+    pids = dexec("pidof ffmpeg 2>/dev/null || [ $? -eq 1 ]").split()
+    pid = pids[0] if pids else None
     if pid is None:
         return None
     st = stat_probe(pid)
@@ -284,4 +285,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except subprocess.TimeoutExpired as e:
+        fail(f"Docker 조회 시간 초과: {e}")

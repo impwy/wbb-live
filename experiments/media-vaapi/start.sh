@@ -31,7 +31,11 @@ cleanup() {
     docker compose --profile source ps -a >&2 || true
   fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# A signal must stop startup as well as clean up; otherwise a completed build
+# can continue into the next `up` after the signal handler returns.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 docker compose up -d --wait mediamtx
 docker compose build transcoder

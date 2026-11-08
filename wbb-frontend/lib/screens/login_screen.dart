@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../api/wbb_api.dart';
+import '../google_navigation.dart';
 import '../state/auth_controller.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.onGoogleStart, this.onLoginSuccess});
+  final VoidCallback? onGoogleStart;
+
+  /// When this screen REPLACED another route (e.g. the Google callback
+  /// screen), a plain pop would leave an empty navigator. The replacer
+  /// passes a destination here instead.
+  final VoidCallback? onLoginSuccess;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -18,6 +25,22 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   String? _error;
+  bool _googleEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProviders();
+  }
+
+  Future<void> _loadProviders() async {
+    try {
+      final enabled = await context.read<ApiClient>().googleEnabled();
+      if (mounted) setState(() => _googleEnabled = enabled);
+    } on ApiException {
+      if (mounted) setState(() => _googleEnabled = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -34,7 +57,12 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await context.read<AuthController>().login(_email.text.trim(), _password.text);
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      if (widget.onLoginSuccess != null) {
+        widget.onLoginSuccess!();
+      } else {
+        Navigator.of(context).pop();
+      }
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -85,10 +113,23 @@ class _LoginScreenState extends State<LoginScreen> {
                         ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Text('로그인'),
                   ),
+                  if (_googleEnabled) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      key: const Key('login-google'),
+                      onPressed: _busy ? null : (widget.onGoogleStart ?? () => startGoogleLogin(context.read<ApiClient>().googleStartUri)),
+                      child: const Text('Google로 로그인'),
+                    ),
+                  ],
                   TextButton(
                     key: const Key('login-goto-signup'),
                     onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => const SignupScreen()),
+                      MaterialPageRoute<void>(
+                        // Forward the destination when this LoginScreen
+                        // REPLACED a route, so signup success also lands in
+                        // the app instead of stripping the last route.
+                        builder: (_) => SignupScreen(onSignupSuccess: widget.onLoginSuccess),
+                      ),
                     ),
                     child: const Text('계정이 없나요? 가입하기'),
                   ),

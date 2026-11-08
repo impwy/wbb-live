@@ -2,7 +2,7 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 실제 GPU 경로를 확인했으나 자동 검사·정리 도구 수정 대기. 제품 송출·시청·Google 로그인은 아직 미완료.
+- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 제품 송출·시청 통합은 아직 미완료.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
 - **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
 - 설계 계약: `docs/design.md` (Codex 관리)
@@ -54,8 +54,24 @@ Flutter 웹 번들은 compose에 포함되지 않으며 `make frontend-build`로
 - `WBB_DATABASE_URL`(필수), `WBB_REDIS_ADDR`
 - `WBB_JWT_SECRET`(prod 필수, 32바이트 이상). dev에서 미설정 시 프로세스마다 임시 키 생성 → 기존 access JWT는 무효가 되지만, 불투명 refresh 토큰과 PostgreSQL 세션은 원칙적으로 유지되어 refresh로 재로그인 없이 복구된다
 - `WBB_CORS_ORIGINS`: auth POST(가입/로그인/refresh/logout)에 허용되는 정확한 Origin 목록. 운영은 `https://live.wombatburrow.com`
+- Google 선택 설정: `WBB_GOOGLE_CLIENT_ID`, `WBB_GOOGLE_CLIENT_SECRET`, `WBB_GOOGLE_CALLBACK_URI`를 모두 설정한다. 전체 미설정은 기능 비활성화, 부분 설정은 시작 실패다. 실제 값은 환경변수로만 전달한다.
 - `WBB_ACCESS_TOKEN_TTL`(기본 10m), `WBB_REFRESH_TOKEN_TTL`(기본 168h)
 - `WBB_RATE_LIMIT_REQUESTS`(IP별, 기본 30/분), `WBB_RATE_LIMIT_ACCOUNT_REQUESTS`(계정별, 기본 10/분)
+
+### Google 로그인 확인 (실제 Google 인증 미검증)
+
+실제 Google 인증 검증에는 Google Console에서 발급한 Web client와 정확히 등록한 callback이 필요하다. 로컬 예시는 `http://localhost:8080/api/v1/auth/google/callback`, 운영 목표는 `https://live.wombatburrow.com/api/v1/auth/google/callback`이다. 개발 HTTP는 loopback만 허용하고 운영은 HTTPS를 사용한다. 실제 client secret은 Git에 저장하지 않는다.
+
+```bash
+# 아래 값은 설명용 자리표시자다. 실제 자격은 로컬 환경에서 주입한다.
+export WBB_GOOGLE_CLIENT_ID='<google-web-client-id>'
+export WBB_GOOGLE_CLIENT_SECRET='<google-web-client-secret>'
+export WBB_GOOGLE_CALLBACK_URI='http://localhost:8080/api/v1/auth/google/callback'
+make frontend-build
+WBB_STATIC_DIR=../wbb-frontend/build/web make run-backend
+```
+
+`http://localhost:8080`에서 가입/로그인 화면의 Google 버튼으로 시작한다. API와 Flutter를 같은 출처에서 제공해야 `/auth/google/complete`의 직접 진입·새로고침이 연결된다. 분리된 개발 서버3000만 실행한 상태는 이 확인 환경이 아니다. 정상 로그인 후 내 방송 등록·새로고침·로그아웃, 취소 후 재시도, 같은 이메일 계정 충돌 안내를 확인한다. 버튼은 서버의 `/api/v1/auth/providers`가 Google 활성화를 알릴 때 표시된다. 모의 provider 검사 성공을 실제 Google 로그인 성공으로 취급하지 않는다.
 
 ## API 요약 (`/api/v1`)
 
@@ -66,6 +82,9 @@ Flutter 웹 번들은 compose에 포함되지 않으며 `make frontend-build`로
 | POST `/auth/refresh` | refresh 쿠키(Origin 검증) | 회전. 재사용 감지 시 family 전체 폐기 |
 | POST `/auth/logout` | refresh 쿠키 또는 access JWT | 204 멱등. 두 자격 모두 독립 폐기 |
 | GET `/auth/me` | access JWT | 200 `{user}` |
+| GET `/auth/providers` | 공개 | `{googleEnabled}` |
+| GET `/auth/google/start` | 공개 | state·nonce·PKCE 생성, Google로 이동 |
+| GET `/auth/google/callback` | state·브라우저 결합 검증 | 토큰 교환·계정 확인 후 고정 완료 화면으로303 |
 | GET `/broadcasts` | 공개 | `{items,nextCursor}` cursor 페이지네이션(기본 20/최대 50) |
 | POST `/broadcasts` | 로그인 | 201. `ownerId`는 서버가 결정 |
 | GET `/broadcasts/{id}` | 공개 | 404 포함 |

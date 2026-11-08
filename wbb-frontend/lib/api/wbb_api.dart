@@ -43,6 +43,8 @@ class ApiClient {
   final http.Client _http;
   final String _baseUrl;
 
+  Uri get googleStartUri => Uri.base.resolve('$_baseUrl/auth/google/start');
+
   /// Fired when a refresh definitively fails with 401 (session dead) so the
   /// app can switch to signed-out and prompt a re-login. Set by the
   /// AuthController.
@@ -113,6 +115,11 @@ class ApiClient {
   }
 
   // -- auth ----------------------------------------------------------------
+
+  Future<bool> googleEnabled() async {
+    final data = await _request('GET', '/auth/providers');
+    return data['googleEnabled'] == true;
+  }
 
   Future<User> register({
     required String email,

@@ -23,12 +23,13 @@ import (
 
 // Server wires modules into HTTP routes.
 type Server struct {
-	cfg        config.Config
-	auth       *auth.Service
-	broadcasts *broadcasts.Service
-	redis      redis.UniversalClient
-	db         *pgxpool.Pool
-	log        *slog.Logger
+	cfg          config.Config
+	auth         *auth.Service
+	broadcasts   *broadcasts.Service
+	redis        redis.UniversalClient
+	db           *pgxpool.Pool
+	log          *slog.Logger
+	googleClient *http.Client
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
 	// production uses time.Now.
@@ -39,8 +40,13 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
+
+// SetGoogleHTTPClient changes only the outbound transport, for integration
+// tests of Google's fixed endpoints. Production configuration cannot change
+// issuer or endpoints.
+func (s *Server) SetGoogleHTTPClient(client *http.Client) { s.googleClient = client }
 
 // SetRateLimitClock pins the rate-limit window clock (tests only).
 func (s *Server) SetRateLimitClock(now func() time.Time) { s.rateLimitClock = now }
@@ -61,6 +67,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.rateLimit("refresh", requireOrigin(s, s.handleRefresh)))
 	mux.HandleFunc("POST /api/v1/auth/logout", requireOrigin(s, s.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("GET /api/v1/auth/providers", s.handleProviders)
+	mux.HandleFunc("GET /api/v1/auth/google/start", s.googleHeaders(s.rateLimit("google-start", s.handleGoogleStart)))
+	mux.HandleFunc("GET /api/v1/auth/google/callback", s.googleHeaders(s.rateLimit("google-callback", s.handleGoogleCallback)))
 
 	mux.HandleFunc("GET /api/v1/broadcasts", s.handleListBroadcasts)
 	mux.HandleFunc("POST /api/v1/broadcasts", s.requireAuth(s.handleCreateBroadcast))

@@ -1,6 +1,6 @@
 # Google 로그인 구현 계약 (티켓06)
 
-상태: 설계, 아직 구현·실제 Google 로그인 증거가 아니다. 티켓01 완료로06은02의 실제 기기 관문과 독립 진행할 수 있다. 기존 이메일 로그인·방송 권한·refresh family 계약을 유지한다. 구현 담당은 AGENTS.md의 전환 규칙을 따르고, 검토·독립 검증은 이 대화의 Codex가 맡는다.
+상태: 구현 자동 검증·리뷰 통과. 실제 Google 자격을 이용한 로그인 증거는 아직 없다. 티켓01 완료로06은02의 실제 기기 관문과 독립 진행할 수 있다. 기존 이메일 로그인·방송 권한·refresh family 계약을 유지한다. 구현 담당은 AGENTS.md의 전환 규칙을 따르고, 검토·독립 검증은 이 대화의 Codex가 맡는다.
 
 ## 신뢰 대상과 설정
 
@@ -14,7 +14,7 @@
 
 1. `GET /api/v1/auth/google/start`는 각각 독립적인 state·nonce·PKCE verifier·browser binding을 암호학적 난수로 생성한다. Google에는 scope `openid email profile`, response_type=code, PKCE S256, 고정 callback을 전달한다. 오프라인 provider refresh token은 요청·저장하지 않는다.
 2. Redis의 state 해시 키에 binding 해시·nonce·verifier·만료를5분 TTL로 저장한다. browser binding은 host-only `HttpOnly; Secure(prod); SameSite=Lax; Path=/api/v1/auth/google` 쿠키로 전달한다. 쿠키만으로 세션을 만들지 않는다.
-3. callback은 단일 state, 단일 code 또는 허용된 오류 입력을 검사한다. 중복 query, code와 error 동시 존재, 누락·만료·다른 브라우저의 binding을 거절한다.
+3. callback은 query 파싱 오류를 먼저 거절하고 단일·비어 있지 않은 state, 단일 code 또는 허용된 오류 입력을 검사한다. 보안 입력의 중복, code와 error 키의 동시 존재(빈 값 포함), 누락·만료·다른 브라우저의 binding을 거절한다. Google의 scope/authuser/prompt/hd 등 추가 응답 값은 인증·계정 연결·redirect 판단에 사용하지 않고 무시한다. 미인식 응답 매개변수 때문에 정상 callback을 거절하지 않는다.
 4. binding 일치 확인과 state 소비를 Redis의 원자 연산으로 수행한다. 다른 브라우저의 잘못된 요청은 정상 state를 삭제하지 않는다. 올바른 요청은 **토큰 교환 전** 소비하여 순차·동시 재사용을 막는다. 교환 실패 후에도 재사용하지 않는다.
 5. 브라우저당 최신 시작 하나만 지원해도 된다. 이전 시작·취소·만료는 새 로그인 안내로 마무리한다. Redis 장애는503이며 자체 인증 쿠키/세션을 발급하지 않는다.
 
@@ -55,3 +55,5 @@
 - [Google discovery](https://accounts.google.com/.well-known/openid-configuration): 운영 endpoint와 지원 알고리즘.
 - [OAuth 보안 BCP](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.7.1): 브라우저 트랜잭션 결합과 CSRF 방어.
 - [OIDC ID token 검증](https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation): audience·azp·nonce 검증.
+
+- [Google code model 응답 파라미터](https://developers.google.com/identity/oauth2/web/guides/use-code-model?hl=en): 추가 응답 매개변수와 미인식 값 처리.

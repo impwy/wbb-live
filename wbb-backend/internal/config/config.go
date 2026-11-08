@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,8 +26,11 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
-	CORSOrigins []string
-	StaticDir   string
+	CORSOrigins        []string
+	StaticDir          string
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleCallbackURI  string
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -50,12 +55,35 @@ func Load() (Config, error) {
 		RateLimitAccountRequests: 10,
 		RateLimitWindow:          time.Minute,
 		StaticDir:                os.Getenv("WBB_STATIC_DIR"),
+		GoogleClientID:           os.Getenv("WBB_GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:       os.Getenv("WBB_GOOGLE_CLIENT_SECRET"),
+		GoogleCallbackURI:        os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")
 	}
 	if cfg.Env != "dev" && cfg.Env != "prod" {
 		return cfg, fmt.Errorf("WBB_ENV must be \"dev\" or \"prod\", got %q", cfg.Env)
+	}
+	googleCount := 0
+	for _, v := range []string{cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleCallbackURI} {
+		if v != "" {
+			googleCount++
+		}
+	}
+	if googleCount != 0 && googleCount != 3 {
+		return cfg, errors.New("Google login requires WBB_GOOGLE_CLIENT_ID, WBB_GOOGLE_CLIENT_SECRET and WBB_GOOGLE_CALLBACK_URI together")
+	}
+	if googleCount == 3 {
+		u, err := url.Parse(cfg.GoogleCallbackURI)
+		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/api/v1/auth/google/callback" || u.Host == "" {
+			return cfg, errors.New("WBB_GOOGLE_CALLBACK_URI must be an exact callback URL")
+		}
+		host := u.Hostname()
+		loopback := host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
+		if u.Scheme != "https" && !(cfg.Env == "dev" && u.Scheme == "http" && loopback) {
+			return cfg, errors.New("WBB_GOOGLE_CALLBACK_URI must use HTTPS (dev HTTP requires loopback)")
+		}
 	}
 
 	var err error

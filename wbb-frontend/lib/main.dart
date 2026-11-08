@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'api/wbb_api.dart';
 import 'screens/home_screen.dart';
+import 'screens/google_complete_screen.dart';
 import 'state/auth_controller.dart';
 
 void main() {
@@ -10,10 +11,11 @@ void main() {
 }
 
 class WbbApp extends StatelessWidget {
-  const WbbApp({super.key, this.apiClient});
+  const WbbApp({super.key, this.apiClient, this.initialUri});
 
   /// Injectable for widget tests; production uses a default client.
   final ApiClient? apiClient;
+  final Uri? initialUri;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +36,9 @@ class WbbApp extends StatelessWidget {
           // Bundled Noto Sans KR (OFL) so text never falls back to CDN fonts.
           fontFamily: 'NotoSansKR',
         ),
-        home: const HomeScreen(),
+        home: (initialUri ?? Uri.base).path == '/auth/google/complete'
+            ? GoogleCompleteScreen(error: (initialUri ?? Uri.base).queryParameters['error'])
+            : const HomeScreen(),
       ),
     );
   }

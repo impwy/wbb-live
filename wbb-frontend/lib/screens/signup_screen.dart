@@ -5,7 +5,12 @@ import '../api/wbb_api.dart';
 import '../state/auth_controller.dart';
 
 class SignupScreen extends StatefulWidget {
-  const SignupScreen({super.key});
+  const SignupScreen({super.key, this.onSignupSuccess});
+
+  /// When this screen was reached from a REPLACED route (e.g. the Google
+  /// callback retry flow), the default double-pop would strip the only
+  /// remaining route. The replacer passes a destination here instead.
+  final VoidCallback? onSignupSuccess;
 
   @override
   State<SignupScreen> createState() => _SignupScreenState();
@@ -39,7 +44,11 @@ class _SignupScreenState extends State<SignupScreen> {
             _password.text,
             _displayName.text.trim(),
           );
-      if (mounted) {
+      if (!mounted) return;
+      if (widget.onSignupSuccess != null) {
+        widget.onSignupSuccess!();
+      } else {
+        // Pushed on top of LoginScreen on top of the app: return to the app.
         Navigator.of(context)
           ..pop()
           ..pop();

@@ -48,6 +48,7 @@ var (
 	// ErrStoreUnavailable is the fail-closed response when Redis cannot be
 	// consulted for protected operations.
 	ErrStoreUnavailable = errors.New("session store unavailable")
+	ErrAccountExists    = errors.New("account already exists")
 )
 
 // InvalidInputError reports a request validation failure for one field.
@@ -107,7 +108,8 @@ func validateEmail(email string) error {
 	if len(email) > maxEmailLen {
 		return &InvalidInputError{Field: "email", Reason: "must be at most 254 characters"}
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email {
 		return &InvalidInputError{Field: "email", Reason: "must be a valid email address"}
 	}
 	return nil
@@ -166,7 +168,8 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, Sess
 	if err := validateEmail(email); err != nil || password == "" {
 		return User{}, Session{}, ErrInvalidCredentials
 	}
-	var id, hash, display string
+	var id, display string
+	var hash *string
 	err := s.db.QueryRow(ctx,
 		`SELECT id, password_hash, display_name FROM users WHERE email = $1`, email,
 	).Scan(&id, &hash, &display)
@@ -176,10 +179,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, Sess
 	if err != nil {
 		return User{}, Session{}, err
 	}
-	if hash == "" { // account has no local password (future OIDC-only accounts)
+	if hash == nil || *hash == "" { // OIDC-only account
 		return User{}, Session{}, ErrInvalidCredentials
 	}
-	ok, err := VerifyPassword(hash, password)
+	ok, err := VerifyPassword(*hash, password)
 	if err != nil {
 		return User{}, Session{}, err
 	}
@@ -191,6 +194,73 @@ func (s *Service) Login(ctx context.Context, email, password string) (User, Sess
 		return User{}, Session{}, err
 	}
 	return User{ID: id, Email: email, DisplayName: display}, sess, nil
+}
+
+// LoginGoogle resolves the verified Google subject before considering email.
+// The transaction makes a new account and identity inseparable; concurrent
+// first logins converge on the winning identity without linking by email.
+func (s *Service) LoginGoogle(ctx context.Context, subject, email, displayName string) (User, Session, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if subject == "" || validateEmail(email) != nil {
+		return User{}, Session{}, ErrInvalidCredentials
+	}
+	find := func() (User, error) {
+		var u User
+		err := s.db.QueryRow(ctx, `SELECT u.id::text,u.email,u.display_name FROM auth_identities i JOIN users u ON u.id=i.user_id WHERE i.provider='google' AND i.issuer='https://accounts.google.com' AND i.subject=$1`, subject).Scan(&u.ID, &u.Email, &u.DisplayName)
+		return u, err
+	}
+	if u, err := find(); err == nil {
+		sess, e := s.openSession(ctx, u.ID)
+		return u, sess, e
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return User{}, Session{}, err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "Google 사용자"
+	}
+	rr := []rune(displayName)
+	if len(rr) > 40 {
+		displayName = string(rr[:40])
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return User{}, Session{}, err
+	}
+	defer tx.Rollback(ctx)
+	var u User
+	err = tx.QueryRow(ctx, `INSERT INTO users(email,password_hash,display_name) VALUES ($1,NULL,$2) ON CONFLICT(email) DO NOTHING RETURNING id::text,email,display_name`, email, displayName).Scan(&u.ID, &u.Email, &u.DisplayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(ctx)
+		if winner, e := find(); e == nil {
+			sess, e := s.openSession(ctx, winner.ID)
+			return winner, sess, e
+		} else if !errors.Is(e, pgx.ErrNoRows) {
+			return User{}, Session{}, e
+		}
+		return User{}, Session{}, ErrAccountExists
+	}
+	if err != nil {
+		return User{}, Session{}, err
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO auth_identities(user_id,provider,issuer,subject) VALUES ($1,'google','https://accounts.google.com',$2) ON CONFLICT DO NOTHING`, u.ID, subject)
+	if err != nil {
+		return User{}, Session{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		_ = tx.Rollback(ctx)
+		winner, e := find()
+		if e != nil {
+			return User{}, Session{}, e
+		}
+		sess, e := s.openSession(ctx, winner.ID)
+		return winner, sess, e
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return User{}, Session{}, err
+	}
+	sess, err := s.openSession(ctx, u.ID)
+	return u, sess, err
 }
 
 // openSession creates a family plus its first session row in one transaction

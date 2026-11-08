@@ -7,11 +7,12 @@
 - 기본 구현: AGENTS.md에 지정된 기존 pi 세션. 마지막 pane `%10`.
 - 대체 구현 Codex: `01a1b9eb-ab52-76c0-a413-ba3cb523ec9e`, 마지막 pane `%12`. 새 세션을 만들거나 기존 세션의 모델을 임의 변경하지 않는다.
 - 조정·설계·리뷰·독립 검증: 이 대화의 Codex. 대체 구현자와 같은 사람이 자기 변경의 독립 리뷰를 대신하지 않는다.
-- 현재 구현 담당: 지정 대체 Codex. pi는 17:40 KST 상태 확인에서도429/1308을 반환했다. VAAPI 후속은 커밋 `0f9d8d0`, Draft PR2에 게시했고 리뷰·독립 검증을 통과했다.
+- 현재 구현 담당: 지정 대체 Codex. pi는18:40 정상복구 후 Google 리뷰를 수정했으나 마지막 Flutter Back 회귀 검사 보완 중 다시429/1308(reset22:40:38, 시간대미표기)을 반환했다. 기존 대체 Codex의 인수 응답과 실제 테스트 작업 시작을 확인해 재이관했다. 최종 Google 구현의 독립 자동검증·두 축 리뷰는 통과했고 실제 Google 자격 로그인 인수가 남아 있다. 현재 구현자는 리뷰 대기 상태다.
 - 현재 작업 브랜치: `work/google-login`, `work/media-vaapi`의 위 커밋에서 분기했다. 티켓06을 지정 대체 Codex에 인계했고 기존 코드·계약을 읽으며 작업을 시작한 것을 tmux에서 확인했다. PR2를 미완료 변경으로 덮어쓰지 않으며 후속 PR은 필요하면 `work/media-vaapi`를 base로 생성한다. PR2의 병합 여부를 확인한 뒤 base를 조정한다.
 - VAAPI 후속: 최종 스냅샷 `54e181d`의 두 축 리뷰와 독립 GPU 검증을 통과했다. 상세 결과는 `docs/reviews/02-media-vaapi.md`, `docs/verification/02-media-vaapi.md`를 따른다. 부모02의 실제 기기 관문은 유지한다. 다음 구현은 독립 진행 가능한 티켓06 Google 로그인이다.
 - 티켓06의 계약은 `docs/google-login-contract.md`와 해당 티켓이다. 실제 Google 자격을 이용한 로그인은 별도 미검증 관문이며, 테스트 provider 성공으로 대체하지 않는다.
-- 다음 pi 재확인: 2026-11-08 18:40 KST, 일회성. 제공자의 17:36:09는 시간대 미표기이며 실제 복구 증거가 아니다. 예약 실행은 조정 Codex가 소유한다.
+- 다음 pi 확인: 2026-11-08 22:45 KST, 일회성. 제공자 reset 시간만으로 복구를 추정하지 않고 상태 확인만 요청한다.
+- 인계 체크포인트: Google 최종 구현 고정스냅샷 `f1ba363`. `docs/reviews/06-google-login.md`, `docs/verification/06-google-login.md`의 자동검증을 통과했다. 실제 Google 자격 로그인 전 티켓06은in-review다. 리뷰 대기를 한도 오류로 해석해 중복 작업을 시작하지 않는다. 원본 문서/커밋/PR 관리는 조정자가 맡는다.
 
 ## pi에서 대체 Codex로
 

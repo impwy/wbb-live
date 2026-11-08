@@ -162,8 +162,9 @@ func redactPGError(err error) error {
 
 type testServer struct {
 	*httptest.Server
-	cfg config.Config
-	api *httpapi.Server
+	cfg  config.Config
+	api  *httpapi.Server
+	logs *bytes.Buffer
 }
 
 type serverOpt func(*config.Config)
@@ -193,6 +194,10 @@ func withCORSOrigins(origins ...string) serverOpt {
 }
 
 func newTestServer(t *testing.T, opts ...serverOpt) *testServer {
+	return newTestServerWithGoogle(t, nil, opts...)
+}
+
+func newTestServerWithGoogle(t *testing.T, googleClient *http.Client, opts ...serverOpt) *testServer {
 	t.Helper()
 	secret := make([]byte, 32)
 	_, _ = rand.Read(secret)
@@ -217,6 +222,9 @@ func newTestServer(t *testing.T, opts ...serverOpt) *testServer {
 		t.Fatalf("listen: %v", err)
 	}
 	serverURL := "http://" + listener.Addr().String()
+	if cfg.GoogleClientID != "" && cfg.GoogleCallbackURI == "" {
+		cfg.GoogleCallbackURI = serverURL + "/api/v1/auth/google/callback"
+	}
 	if !slices.Contains(cfg.CORSOrigins, serverURL) {
 		cfg.CORSOrigins = append(cfg.CORSOrigins, serverURL)
 	}
@@ -244,12 +252,16 @@ func newTestServer(t *testing.T, opts ...serverOpt) *testServer {
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	authSvc := auth.NewService(testPool, rdb, tokens, cfg.RefreshTokenTTL)
 	bcastSvc := broadcasts.NewService(testPool)
-	api := httpapi.NewServer(cfg, authSvc, bcastSvc, rdb, testPool, slog.New(slog.DiscardHandler))
+	logs := new(bytes.Buffer)
+	api := httpapi.NewServer(cfg, authSvc, bcastSvc, rdb, testPool, slog.New(slog.NewJSONHandler(logs, nil)))
+	if googleClient != nil {
+		api.SetGoogleHTTPClient(googleClient)
+	}
 	ts := httptest.NewUnstartedServer(api.Handler())
 	ts.Listener = listener
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return &testServer{Server: ts, cfg: cfg, api: api}
+	return &testServer{Server: ts, cfg: cfg, api: api, logs: logs}
 }
 
 // freezeRateClock pins the rate-limit window clock mid-window so fixed-window
@@ -273,6 +285,7 @@ type apiResp struct {
 	status int
 	header http.Header
 	body   map[string]any
+	raw    string
 }
 
 func (r apiResp) errCode() string {
@@ -317,7 +330,7 @@ func do(t *testing.T, client *http.Client, method, url string, payload any, bear
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	out := apiResp{status: resp.StatusCode, header: resp.Header}
+	out := apiResp{status: resp.StatusCode, header: resp.Header, raw: string(raw)}
 	if len(raw) > 0 && strings.Contains(resp.Header.Get("Content-Type"), "json") {
 		if err := json.Unmarshal(raw, &out.body); err != nil {
 			t.Fatalf("%s %s: decode body %q: %v", method, url, string(raw), err)

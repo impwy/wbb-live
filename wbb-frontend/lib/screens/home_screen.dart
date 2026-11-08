@@ -11,7 +11,8 @@ import '../state/auth_controller.dart';
 
 /// Public broadcast list (works signed out).
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.openMyBroadcastsOnLoad = false});
+  final bool openMyBroadcastsOnLoad;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -27,6 +28,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _load();
+    if (widget.openMyBroadcastsOnLoad) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MyBroadcastsScreen()));
+        if (mounted) _load();
+      });
+    }
   }
 
   Future<void> _load({bool more = false}) async {

@@ -1,0 +1,10 @@
+# PROPOSAL ONLY. Review with docker-compose.yml; never used by start.sh.
+# Host-network operating Caddy cannot resolve the isolated Compose mediamtx DNS.
+# These two HTTP ports are bound to host loopback only. Check conflicts first.
+services:
+  caddy:
+    profiles: [loopback-only]
+  mediamtx:
+    ports:
+      - "127.0.0.1:19888:8888" # HLS, private to host-network Caddy
+      - "127.0.0.1:19889:8889" # WHIP, private to host-network Caddy

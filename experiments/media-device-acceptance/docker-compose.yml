@@ -1,0 +1,72 @@
+# WBB device acceptance — isolated verification environment (ticket 02 follow-up).
+# Dedicated project; independent ports; loopback HTTPS via Caddy Basic Auth.
+# The existing CPU (8090/8888/…) and VAAPI (18888/…) experiments stay untouched.
+name: wbb-media-acceptance
+
+services:
+  caddy:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports:
+      - "${WBB_MEDIA_BIND_IP:?required}:${WBB_MEDIA_HTTPS_PORT:?required}:${WBB_MEDIA_HTTPS_PORT:?required}" # one explicit interface
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web-build:/srv/web:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      WBB_MEDIA_AUTH_USER: ${WBB_MEDIA_AUTH_USER:?required}
+      WBB_MEDIA_AUTH_HASH: ${WBB_MEDIA_AUTH_HASH:?required}
+      WBB_MEDIA_ORIGIN: ${WBB_MEDIA_ORIGIN:?required}
+      WBB_MEDIA_HOSTNAME: ${WBB_MEDIA_HOSTNAME:?required}
+      WBB_MEDIA_HTTPS_PORT: ${WBB_MEDIA_HTTPS_PORT:?required}
+    depends_on:
+      - mediamtx
+    networks:
+      - internal
+    restart: "no"
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg@sha256:208e9f1740a09a5ee63b6308e77ce0d54fce0456462f640e6bd9acfc62ebb5a2
+    command: ["/run/config/mediamtx.yml"]
+    volumes:
+      - ./run/mediamtx.yml:/run/config/mediamtx.yml:ro
+    ports:
+      # ICE/TCP only (same port in/out for reachable candidates).
+      # Loopback for verification; change bind for real-device LAN testing.
+      - "${WBB_MEDIA_BIND_IP:?required}:${WBB_MEDIA_ICE_PORT:?required}:${WBB_MEDIA_ICE_PORT:?required}"
+    networks:
+      - internal
+    restart: "no"
+
+  transcoder-cpu:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg@sha256:208e9f1740a09a5ee63b6308e77ce0d54fce0456462f640e6bd9acfc62ebb5a2
+    entrypoint: ["/bin/sh", "/run/transcode.sh"]
+    volumes:
+      - ../media-single-rendition/transcode.sh:/run/transcode.sh:ro
+    depends_on: [mediamtx]
+    networks: [internal]
+    profiles: [cpu]
+    restart: "no"
+
+  transcoder-vaapi:
+    build:
+      context: ../media-vaapi
+      dockerfile: Dockerfile.transcoder
+    image: wbb-media-acceptance/transcoder-vaapi:alpine3.24
+    entrypoint: ["/bin/sh", "/run/transcode-vaapi.sh"]
+    volumes:
+      - ../media-vaapi/transcode-vaapi.sh:/run/transcode-vaapi.sh:ro
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    depends_on: [mediamtx]
+    networks: [internal]
+    profiles: [vaapi]
+    restart: "no"
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:

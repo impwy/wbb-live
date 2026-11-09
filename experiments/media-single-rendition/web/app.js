@@ -12,8 +12,99 @@
 
 'use strict';
 
-const WHIP_URL = 'http://127.0.0.1:8889/spike/source/whip';
-const HLS_URL = 'http://127.0.0.1:8888/spike/720p/index.m3u8';
+// Runtime media endpoint configuration (backward compatible).
+// - No config (default): existing localhost URLs — all 83 CPU-spike checks
+//   and the VAAPI spike keep working unchanged.
+// - HTTPS mode (window.__WBB_MEDIA_CONFIG): same-origin RELATIVE paths only.
+//   External origins, scheme-relative URLs (//host), path escapes (/../),
+//   and localhost fallbacks are rejected at startup. No arbitrary upstream.
+const RUNTIME_MEDIA_CONFIG = (() => {
+  const raw = window.__WBB_MEDIA_CONFIG;
+  if (!raw) {
+    // HTTPS page without runtime config would silently fall back to
+    // http://127.0.0.1:* (mixed content). Reject explicitly instead.
+    if (window.location.protocol === 'https:') {
+      throw new Error('__WBB_MEDIA_CONFIG missing on HTTPS page (would cause mixed-content localhost fallback)');
+    }
+    return null;
+  }
+  const fail = why => { throw new Error(`__WBB_MEDIA_CONFIG invalid: ${why}`); };
+  const rel = p => {
+    if (typeof p !== 'string' || !p.startsWith('/') || p.startsWith('//'))
+      fail('not a same-origin relative path');
+    if (/[?#\\\x00-\x1f]/.test(p) || /%(?:2f|5c)/i.test(p)) fail('unsafe path encoding');
+    let decoded = p;
+    for (let i = 0; i < 3; i++) {
+      try { decoded = decodeURIComponent(decoded); } catch (_) { fail('invalid path encoding'); }
+      if (decoded.split('/').some(segment => segment === '.' || segment === '..')) fail('path traversal');
+    }
+    try {
+      const u = new URL(p, window.location.origin);
+      if (u.origin !== window.location.origin || u.protocol !== window.location.protocol || u.pathname !== p)
+        fail('path normalization changed endpoint');
+      return u.pathname;
+    } catch (_) { fail('unparseable path'); }
+  };
+  const cfg = {
+    whipPath: rel(raw.whipPath),
+    hlsPath: rel(raw.hlsPath),
+    whipBase: rel(raw.whipBase),
+  };
+  if (cfg.whipBase !== cfg.whipPath ||
+      cfg.whipPath !== '/__media-check/whip/spike/source/whip' ||
+      cfg.hlsPath !== '/__media-check/hls/spike/720p/index.m3u8') fail('unexpected verification endpoint');
+  if (/localhost|127\.0\.0\.1|\[::1\]/.test(cfg.whipPath + ' ' + cfg.hlsPath)) {
+    fail('localhost in HTTPS mode paths');
+  }
+  return cfg;
+})();
+
+const WHIP_URL = RUNTIME_MEDIA_CONFIG
+  ? RUNTIME_MEDIA_CONFIG.whipPath
+  : 'http://127.0.0.1:8889/spike/source/whip';
+const HLS_URL = RUNTIME_MEDIA_CONFIG
+  ? RUNTIME_MEDIA_CONFIG.hlsPath
+  : 'http://127.0.0.1:8888/spike/720p/index.m3u8';
+
+// Absolute base for resolving relative URLs (a relative WHIP_URL would cause
+// a TypeError if passed directly to new URL() as a base).
+const WHIP_BASE_ABSOLUTE = new URL(WHIP_URL, window.location.origin).toString();
+const HLS_BASE_ABSOLUTE = new URL(HLS_URL, window.location.origin).toString();
+
+// Resolve a WHIP Location header. The proxy (Caddy) already restores the
+// path prefix in the Location; the client VALIDATES that it is same-origin
+// and within the allowed WHIP resource space, then uses it as-is.
+// Never prepends whipBase (that would double the prefix).
+function resolveWhipLocation(locationHeader) {
+  if (typeof locationHeader !== 'string' || !locationHeader || /[?#\\\x00-\x1f]/.test(locationHeader)) {
+    throw new Error('invalid WHIP Location');
+  }
+  // A URL constructor normalizes dot segments. Reject them in the original
+  // header as well, including encoded forms, before accepting the resource.
+  let decoded = locationHeader;
+  for (let i = 0; i < 3; i++) {
+    try { decoded = decodeURIComponent(decoded); } catch (_) { throw new Error('invalid WHIP Location encoding'); }
+    if (decoded.split('/').some(segment => segment === '.' || segment === '..')) throw new Error('WHIP Location traversal');
+  }
+  if (/%(?:2f|5c)/i.test(locationHeader)) throw new Error('WHIP Location encoded separator');
+  let resolved;
+  try {
+    resolved = new URL(locationHeader, WHIP_BASE_ABSOLUTE);
+  } catch (_) {
+    throw new Error('unparseable WHIP Location');
+  }
+  if (resolved.origin !== new URL(WHIP_BASE_ABSOLUTE).origin || resolved.username || resolved.password || resolved.hash) {
+    throw new Error('WHIP Location cross-origin or malformed');
+  }
+  if (RUNTIME_MEDIA_CONFIG) {
+    // Path is already normalized by the URL constructor (/../ and %2e%2e
+    // are resolved); verify the normalized path stays inside the prefix.
+    if (!resolved.pathname.startsWith(RUNTIME_MEDIA_CONFIG.whipBase + '/')) {
+      throw new Error('WHIP Location outside allowed resource path');
+    }
+  }
+  return resolved.toString();
+}
 
 const logEl = document.getElementById('log');
 function log(msg, cls) {
@@ -90,7 +181,7 @@ async function deleteResource(res, field) {
     log(`WHIP DELETE(${field === 'deleteStatus' ? '정지' : '늦은 정리'}): HTTP ${resp.status}`, resp.ok ? 'ok' : 'warn');
   } catch (e) {
     updateState({ [field]: 'network-error' });
-    log(`WHIP DELETE 오류: ${e}`, 'err');
+    log('WHIP DELETE 네트워크 오류', 'err');
   }
 }
 
@@ -132,7 +223,7 @@ async function lateRelease(a, locationHeader, etag) {
   stopLocal(a);
   log('늦은 201 도착 — 해당 세션만 즉시 DELETE', 'warn');
   if (locationHeader) {
-    await deleteResource({ location: new URL(locationHeader, WHIP_URL).toString(), etag }, 'lateDeleteStatus');
+    await deleteResource({ location: resolveWhipLocation(locationHeader), etag }, 'lateDeleteStatus');
   }
   observeTeardown(a);
 }
@@ -221,14 +312,14 @@ async function startPublish(makeStream, kindLabel) {
     }
 
     if (resp.status !== 201 || !locationHeader) {
-      log(`WHIP POST 실패: HTTP ${resp.status} location=${locationHeader}`, 'err');
+      log(`WHIP POST 실패: HTTP ${resp.status}`, 'err');
       updateState({ whipPost: resp.status });
       await teardown();
       return;
     }
-    updateState({ whipPost: resp.status, location: new URL(locationHeader, WHIP_URL).toString(), etag });
+    updateState({ whipPost: resp.status, location: resolveWhipLocation(locationHeader), etag });
     a.resource = { location: state.location, etag };
-    log(`WHIP POST 201 · Location=${locationHeader} · ETag=${etag}`, 'ok');
+    log('WHIP POST 201 · resource 수신', 'ok');
     setWhip('publishing');
 
     const answerSdp = await resp.text();
@@ -603,7 +694,7 @@ window.addEventListener('pagehide', window.__disposePlaybackObserver);
 async function manifestProbe() {
   try {
     const master = await (await fetch(HLS_URL, { cache: 'no-store' })).text();
-    const variantUrl = new URL((master.match(/^([^#\s][^\s]*)$/m) || [])[1] || '', HLS_URL).toString();
+    const variantUrl = new URL((master.match(/^([^#\s][^\s]*)$/m) || [])[1] || '', HLS_BASE_ABSOLUTE).toString();
     const media = await (await fetch(variantUrl, { cache: 'no-store' })).text();
     const isLL = media.includes('EXT-X-PART-INF') || media.includes('EXT-X-PART:');
     const hasServerControl = media.includes('CAN-BLOCK-RELOAD=YES');

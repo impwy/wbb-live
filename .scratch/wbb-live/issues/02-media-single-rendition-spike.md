@@ -29,4 +29,6 @@
 
 현재 스택은 MediaMTX1.21.3-ffmpeg, CPU libx264/AAC, loopback ICE18389 및 로컬 hls.js1.6.7이다. 로컬 합성 검사 성공을 실제 두 기기·VAAPI·외부망 성공으로 표시하지 않는다.
 
-**VAAPI 후속:** `02-media-vaapi-followup.md`에서 GPU 컨테이너·SSH TCP ICE 브라우저 경로를 진행 중이다. 실제 스트림과 Python 종료 검사 자체의 독립 성공은 확인했지만 자동 검증기 연결·정리 도구 수정이 남았고 GLM 한도로 대기 중이다. 로컬 CPU83항목 결과와 별개로 기록한다.
+**VAAPI 후속:** `02-media-vaapi-followup.md`의 구현은0f9d8d0으로 Draft PR2에 게시됐다. 최종 독립 GPU 브라우저13/13·해상도3종·원래 FFmpeg 종료 및 제한 시간 검증을 통과했다. 로컬 CPU83항목 및 실제 기기·외부망 관문과 구분한다.
+
+**실기기 환경 후속:** 2026-11-09부터 `02-device-acceptance-environment.md`에서 인증된 동일 출처 HTTPS·검증용 ICE 설정을 준비한다. localhost 고정 주소 때문에 휴대폰에서 접속할 수 없는 문제를 해결하는 부모02 내부 작업이며03/04를 시작하거나 실제 기기 검증을 대신하지 않는다.

@@ -1,0 +1,74 @@
+# WBB device acceptance — Caddy HTTPS + Basic Auth + reverse proxy.
+#
+# Architecture:
+#   Browser ──HTTPS──→ Caddy:8443 (auth + origin check + path proxy)
+#     /__media-check/whip/* → MediaMTX:8889 (prefix stripped; Location restored)
+#     /__media-check/hls/*  → MediaMTX:8888 (prefix stripped)
+#     /__media-check/*      → static web UI (file_server)
+#
+# NOTE: `route` preserves explicit directive order. Without it, Caddy's
+# default sorting puts handle_path (proxy) BEFORE respond (origin checks),
+# letting wrong-origin requests reach the upstream.
+
+{
+	admin off
+	default_sni {$WBB_MEDIA_HOSTNAME}
+	skip_install_trust
+}
+
+https://{$WBB_MEDIA_HOSTNAME}:{$WBB_MEDIA_HTTPS_PORT} {
+	tls internal
+
+	route {
+		# ── 1. Basic Auth (everything; runs before any proxy) ──
+		basic_auth {
+			{$WBB_MEDIA_AUTH_USER} {$WBB_MEDIA_AUTH_HASH}
+		}
+
+		# ── 2. Origin checks for WHIP mutations (BEFORE proxy) ──
+		# POST/PATCH/DELETE to WHIP paths require the exact expected Origin.
+		# Missing Origin (non-browser) and wrong Origin are both 403.
+		@whip_mut_no_origin {
+			path /__media-check/whip*
+			method POST PATCH DELETE
+			not header Origin *
+		}
+		respond @whip_mut_no_origin "Forbidden: missing Origin" 403
+
+		@whip_mut_wrong_origin {
+			path /__media-check/whip*
+			method POST PATCH DELETE
+			not header Origin {$WBB_MEDIA_ORIGIN}
+		}
+		respond @whip_mut_wrong_origin "Forbidden: wrong Origin" 403
+
+		# ── 3. WHIP proxy (strip /__media-check/whip, restore Location prefix)──
+		handle_path /__media-check/whip/* {
+			reverse_proxy mediamtx:8889 {
+				header_down Location ^/(.*) /__media-check/whip/$1
+			}
+		}
+
+		# ── 4. HLS proxy (strip /__media-check/hls) ──
+		handle_path /__media-check/hls/* {
+			reverse_proxy mediamtx:8888 {
+				# MediaMTX cookieCheck redirects to /spike/...; keep the
+				# browser on the authenticated /__media-check/hls prefix.
+				header_down Location ^/(.*) /__media-check/hls/$1
+			}
+		}
+
+		# ── 5. Static web UI ──
+		handle /__media-check/* {
+			uri strip_prefix /__media-check
+			root * /srv/web
+			file_server
+		}
+
+		# ── 6. Root redirect ──
+		redir / /__media-check/ 308
+
+		# ── 7. Everything else: 404 ──
+		respond 404
+	}
+}

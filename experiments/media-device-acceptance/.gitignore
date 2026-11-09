@@ -1,0 +1,5 @@
+.env
+web-build/
+run/
+__pycache__/
+*.pyc

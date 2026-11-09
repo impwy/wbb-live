@@ -42,8 +42,11 @@
 
   <h2>시청 (LL-HLS, hls.js 로컬 번들)</h2>
   <div class="row">
-    <button id="btn-play">재생</button>
-    <button id="btn-sound">소리 켜기</button>
+    <button id="btn-play" disabled>재생</button>
+    <button id="btn-sound" disabled>소리 켜기</button>
+    <button id="btn-live" disabled>라이브 위치로 이동</button>
+    <span class="state">준비: <span id="play-readiness">확인 중</span></span>
+    <span class="state">지연: <span id="latency-state">측정 전</span></span>
     <span class="state">hls.js: <span id="hls-state">—</span></span>
     <span class="state">영상: <span id="video-info">—</span></span>
   </div>

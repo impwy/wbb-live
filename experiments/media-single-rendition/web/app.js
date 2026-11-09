@@ -123,6 +123,8 @@ const state = {
   whipPost: null, patchStatus: null, deleteStatus: null, lateDeleteStatus: null,
   location: null, etag: null,
   publishedSize: null, outbound: null,
+  playbackReady: false, playbackReadiness: 'checking',
+  playbackStartupMs: null, playerLatency: null, targetLatency: null,
   // Observed (never hardcoded) at teardown time:
   tracksStopped: null, pcClosed: null, acClosed: null,
   lastEvent: '',
@@ -568,20 +570,175 @@ function buildTrickleFragment(sdp) {
 
 let hls = null;
 const playBtn = document.getElementById('btn-play');
+const soundBtn = document.getElementById('btn-sound');
+const liveBtn = document.getElementById('btn-live');
+const readinessEl = document.getElementById('play-readiness');
+const latencyEl = document.getElementById('latency-state');
 const video = document.getElementById('playback');
+
+// The viewer runs independently of the publisher tab. One bounded probe at a
+// time verifies master → media playlist → init/part bytes; stale replies from
+// a hidden/closed page can never re-enable playback.
+const playbackProbe = { closed: false, epoch: 0, timer: null, abort: null,
+  fingerprint: null, lastProgressAt: 0 };
+const hlsRoot = new URL('./', HLS_BASE_ABSOLUTE);
+const mediaCredentials = RUNTIME_MEDIA_CONFIG ? 'same-origin' : 'omit';
+let userPaused = false;
+let internalPause = false;
+let playbackRequestedAt = null;
+video.addEventListener('pause', () => { if (!internalPause) userPaused = true; });
+video.addEventListener('playing', () => {
+  if (playbackRequestedAt !== null && state.playbackStartupMs === null) {
+    updateState({ playbackStartupMs: Math.round(performance.now() - playbackRequestedAt) });
+  }
+  playbackRequestedAt = null;
+});
+
+function setPlaybackReadiness(kind, label) {
+  const ready = kind === 'ready';
+  readinessEl.textContent = label;
+  playBtn.disabled = !ready;
+  soundBtn.disabled = !ready;
+  liveBtn.disabled = !ready || (!hls && !video.src);
+  updateState({ playbackReady: ready, playbackReadiness: kind });
+  if (!ready && ['waiting', 'auth', 'stale'].includes(kind) &&
+      (hls || video.hasAttribute('src') || video.srcObject)) {
+    resetPlayback();
+  }
+}
+
+function childHlsUrl(raw, base) {
+  if (!raw || /^\/\//.test(raw) || /[\\\x00-\x1f]/.test(raw)) throw new Error('unsafe HLS resource');
+  const url = new URL(raw, base);
+  if (url.origin !== hlsRoot.origin || !url.pathname.startsWith(hlsRoot.pathname)) {
+    throw new Error('HLS resource outside verification path');
+  }
+  return url.toString();
+}
+
+async function getReadyResource(url, signal, binary = false) {
+  const response = await fetch(url, { cache: 'no-store', credentials: mediaCredentials, signal });
+  if (response.status === 401 || response.status === 403) {
+    throw { kind: 'auth', label: `인증 필요 (HTTP ${response.status})` };
+  }
+  if (response.status === 404 || response.status === 410) {
+    throw { kind: 'waiting', label: '방송 또는 변환 영상 대기 중' };
+  }
+  if (!response.ok) throw { kind: 'network', label: `미디어 응답 오류 (HTTP ${response.status})` };
+  if (binary) {
+    const bytes = await response.arrayBuffer();
+    if (!bytes.byteLength) throw { kind: 'waiting', label: '초기 미디어 준비 중' };
+    return bytes;
+  }
+  const body = await response.text();
+  if (!body.startsWith('#EXTM3U')) throw { kind: 'waiting', label: '재생 목록 준비 중' };
+  return body;
+}
+
+async function checkPlaybackReadiness() {
+  if (playbackProbe.closed) return;
+  const epoch = ++playbackProbe.epoch;
+  const controller = new AbortController();
+  playbackProbe.abort = controller;
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 5000);
+  try {
+    const master = await getReadyResource(HLS_BASE_ABSOLUTE, controller.signal);
+    const variant = master.split('\n').map(line => line.trim()).find(line => line && !line.startsWith('#'));
+    if (!variant) throw { kind: 'waiting', label: '변환 영상 목록 준비 중' };
+    const variantUrl = childHlsUrl(variant, HLS_BASE_ABSOLUTE);
+    const media = await getReadyResource(variantUrl, controller.signal);
+    const map = (media.match(/^#EXT-X-MAP:[^\n]*URI="([^"]+)"/m) || [])[1];
+    const parts = [...media.matchAll(/^#EXT-X-PART:[^\n]*URI="([^"]+)"/gm)];
+    const segments = media.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    const playable = parts.at(-1)?.[1] || segments.at(-1);
+    if (!playable) throw { kind: 'waiting', label: '초기 미디어 준비 중' };
+    if (map) await getReadyResource(childHlsUrl(map, variantUrl), controller.signal, true);
+    await getReadyResource(childHlsUrl(playable, variantUrl), controller.signal, true);
+    if (playbackProbe.closed || epoch !== playbackProbe.epoch) return;
+    const fingerprint = `${(media.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m) || [])[1] || ''}:${playable}`;
+    if (fingerprint !== playbackProbe.fingerprint) {
+      playbackProbe.fingerprint = fingerprint;
+      playbackProbe.lastProgressAt = performance.now();
+    }
+    if (performance.now() - playbackProbe.lastProgressAt > 7000) {
+      setPlaybackReadiness('stale', '미디어 갱신 중단 — 새 방송 대기');
+    } else {
+      setPlaybackReadiness('ready', '재생 가능');
+    }
+  } catch (error) {
+    if (playbackProbe.closed || epoch !== playbackProbe.epoch) return;
+    if (error && error.kind) {
+      if (error.kind === 'waiting') playbackProbe.fingerprint = null;
+      setPlaybackReadiness(error.kind, error.label);
+    } else if (timedOut || error?.name === 'AbortError') {
+      setPlaybackReadiness('slow', '미디어 응답 지연 — 재확인 중');
+    } else {
+      setPlaybackReadiness('network', '미디어 네트워크 오류 — 재확인 중');
+    }
+  } finally {
+    clearTimeout(timeout);
+    if (playbackProbe.abort === controller) playbackProbe.abort = null;
+    if (!playbackProbe.closed && epoch === playbackProbe.epoch) {
+      playbackProbe.timer = setTimeout(checkPlaybackReadiness, 1500);
+    }
+  }
+}
+
+window.addEventListener('pagehide', () => {
+  playbackProbe.closed = true;
+  playbackProbe.epoch++;
+  clearTimeout(playbackProbe.timer);
+  playbackProbe.abort?.abort();
+});
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  playbackProbe.closed = false;
+  playbackProbe.epoch++;
+  clearTimeout(playbackProbe.timer);
+  playbackProbe.abort?.abort();
+  playbackProbe.abort = null;
+  playbackProbe.fingerprint = null;
+  playbackProbe.lastProgressAt = 0;
+  if (hls || video.hasAttribute('src') || video.srcObject) resetPlayback();
+  setPlaybackReadiness('checking', '복귀 후 재생 준비 확인 중');
+  playbackProbe.timer = setTimeout(checkPlaybackReadiness, 0);
+});
+
+function resetPlayback() {
+  const previous = hls;
+  hls = null;
+  if (previous) { try { previous.destroy(); } catch (_) {} }
+  internalPause = true;
+  try { video.pause(); } catch (_) {}
+  internalPause = false;
+  video.removeAttribute('src');
+  video.load();
+  liveBtn.disabled = true;
+  latencyEl.textContent = '측정 전';
+  playbackRequestedAt = null;
+  updateState({ playerMode: 'none', playerLatency: null, targetLatency: null,
+    playbackStartupMs: null });
+}
 
 function attachMse() {
   if (!(window.Hls && Hls.isSupported())) return false;
-  hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+  const instance = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+  hls = instance;
+  instance.on(Hls.Events.MANIFEST_PARSED, () => {
+    if (instance !== hls) return;
     els.hls.textContent = `hls.js ${Hls.version} manifest OK (MSE)`;
     log(`hls.js ${Hls.version}: manifest 파싱 성공 (MSE 경로)`, 'ok');
   });
-  hls.on(Hls.Events.ERROR, (_, data) => {
-    if (data.fatal) { els.hls.textContent = `hls.js 오류: ${data.details}`; log(`hls.js 치명 오류: ${data.details}`, 'err'); }
+  instance.on(Hls.Events.ERROR, (_, data) => {
+    if (instance !== hls || !data.fatal) return;
+    resetPlayback();
+    els.hls.textContent = `hls.js 오류: ${data.details} — 재생을 다시 누르세요`;
+    log(`hls.js 치명 오류: ${data.details}`, 'err');
   });
-  hls.loadSource(HLS_URL);
-  hls.attachMedia(video);
+  instance.loadSource(HLS_URL);
+  instance.attachMedia(video);
+  liveBtn.disabled = false;
   return true;
 }
 
@@ -618,13 +775,18 @@ async function tryFallbackToMse(reason) {
   if (playerMode !== 'native' || fallbackAttempted) return;
   fallbackAttempted = true;
   log(`native HLS 실패(${reason}) — hls.js/MSE 폴백 시도`, 'warn');
+  const resume = !userPaused;
+  internalPause = true;
   try { video.pause(); } catch (_) {}
+  internalPause = false;
   video.removeAttribute('src');
   video.load();
   if (attachMse()) {
     setPlayerMode('mse', true);
-    try { await video.play(); log('폴백 재생 시작 (MSE)', 'ok'); }
-    catch (e) { log(`폴백 재생 거부: ${e.name}`, 'warn'); }
+    if (resume) {
+      try { await video.play(); log('폴백 재생 시작 (MSE)', 'ok'); }
+      catch (e) { log(`폴백 재생 거부: ${e.name}`, 'warn'); }
+    }
   } else {
     setPlayerMode('none', true);
     els.hls.textContent = `재생 불가 (native 실패: ${reason})`;
@@ -633,6 +795,9 @@ async function tryFallbackToMse(reason) {
 }
 
 playBtn.addEventListener('click', async () => {
+  if (!state.playbackReady) return;
+  userPaused = false;
+  if (!hls && !video.src) playbackRequestedAt = performance.now();
   if (!hls && !video.src) await attachPlayer();
   try {
     await video.play();
@@ -644,10 +809,40 @@ playBtn.addEventListener('click', async () => {
     }
   }
 });
-document.getElementById('btn-sound').addEventListener('click', async () => {
+soundBtn.addEventListener('click', async () => {
+  if (!state.playbackReady) return;
+  userPaused = false;
+  if (!hls && !video.src) {
+    playbackRequestedAt = performance.now();
+    await attachPlayer();
+  }
   video.muted = false;
   try { await video.play(); log('소리 켜고 재생 시도', 'ok'); } catch (e) { log(`재생 거부: ${e.name}`, 'warn'); }
 });
+
+liveBtn.addEventListener('click', () => {
+  if (!state.playbackReady) return;
+  let position = hls?.liveSyncPosition;
+  if (!Number.isFinite(position) && video.seekable.length) {
+    position = video.seekable.end(video.seekable.length - 1);
+  }
+  if (!Number.isFinite(position)) return;
+  // A user click permits a seek, but never resumes a user-paused video.
+  video.currentTime = position;
+  log('사용자 요청으로 라이브 위치로 이동');
+});
+
+setInterval(() => {
+  if (!hls || !Number.isFinite(hls.latency)) return;
+  const latency = hls.latency;
+  const target = hls.targetLatency;
+  const syncGap = hls.liveSyncPosition - video.currentTime;
+  updateState({ playerLatency: latency, targetLatency: Number.isFinite(target) ? target : null,
+    syncPositionGap: Number.isFinite(syncGap) ? syncGap : null });
+  const startup = state.playbackStartupMs === null ? '측정 중' : `${(state.playbackStartupMs / 1000).toFixed(2)}초`;
+  latencyEl.textContent = `시작 ${startup} · 엣지 ${(latency).toFixed(2)}초` +
+    (Number.isFinite(target) ? ` (목표 ${target.toFixed(2)}초)` : '') + ' · E2E 미측정';
+}, 1000);
 
 
 
@@ -745,3 +940,4 @@ if (params.get('mode') === 'synth' && params.get('autostart') === '1') {
   log('autostart=1: 합성 모드 자동 시작');
   setTimeout(() => startPublish(a => syntheticStream(a), 'synthetic').then(() => setTimeout(manifestProbe, 6000)), 1000);
 }
+checkPlaybackReadiness();

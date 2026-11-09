@@ -40,3 +40,5 @@ Connected/Failed의단순상태관찰goroutine은미디어/생성/자원보유�
 ## 범위 일치 검토
 
 초기 validateCompletionConf는 RTSP를 모두 거절하고 WHIP 발행·HLS 읽기만 허용했다. 이는 기존 WHIP→RTSP→FFmpeg→RTSP 출력→LL-HLS 구성과 두 방송의 변환 프로세스 보존 검증을 충족하지 못한다. 추적 대상 ingress의 계약 없는 발행을 막되, 내부 변환기의 RTSP 읽기·출력을 경로와 권한으로 제한해 지원하도록 수정 요청했다. 쉬운 직접 HLS 경로만 통과한 것으로 전체 스파이크 완료를 대신하지 않는다.
+
+RTSP 범위 보완안은 source 읽기·720p 출력 발행을 HTTP 인증의 프로토콜/회차 경로/action으로 제한하고, 관리 API 조회·kick을 유지하면서 설정 변경을 차단하는 방식으로 검토했다. 실제 다른 회차·동작·프로토콜 우회 거절은 검증 전이다. lifecycle 응답의 contract_version 누락도 지적하여 명시 버전과 검사 항목이 추가됐다. 기초 HTTP/세션 검사와 실제 두 방송·부트 장애 검증은 구분한다.

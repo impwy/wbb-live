@@ -1,7 +1,7 @@
 # 05-A: 단일 품질 모바일 카메라·마이크 송출
 
 **Status:** ready-for-agent
-**Blocked by:** 04-B 인증 WHIP·worker·Flutter 미디어 통합.03 ABR는 이 하위 범위의 선행이 아니다.
+**Blocked by:** 04-B1/04-B2 정상·권한·종료 미디어 인터페이스의 로컬 독립 검증 완료.03 ABR는 선행이 아니다. 부모04-B의 unknown POST 회수는07에 남기며 실제 기기 인수는 별도 유지한다.
 **구현 담당:** 지정 pi 또는 사용자 승인 대체 Codex의 현재 단독 구현자.
 
 ## 목표

@@ -65,3 +65,7 @@ HLS 인가 직후 stop 및 대기 중 `_HLS_msn` blocking reload를 검사한다
 ## 서버 체크포인트와 다음 구현
 
 04-B1 정상 미디어·권한·종료·장애 경계를 검증했고 두 축 정적 리뷰 잔여0건이다. 조정자 실제 worker SIGKILL·자동 재시작·새 시청자33프레임·최종자원회수 및 pending LL-HLS 요청 종료(약2.1초404)를 독립 확인했다. 서버 인터페이스를 기반으로04-B2 Flutter 통합을 진행한다. 주소 없는unknown POST 자동회수는04-B/07에 남기며 부모04-B는in-progress를유지한다.
+
+## 04-B2 로컬 검증 결과
+
+Flutter PC 송출·익명 시청의 독립 analyze0·Flutter53개·JS3개·릴리스 빌드·실제 제품 UI 두 Chrome 검증과 두 축 리뷰를 통과했다. docs/verification/04b2-flutter-live.md를 따른다. 부모04-B는 unknown POST 자동회수가 남아in-progress를 유지한다.05-A는 검증한 정상·권한·종료 인터페이스를 사용해 로컬 구현을 시작할 수 있다. 실제 기기 관문을 완료한 것으로 해석하지 않는다.

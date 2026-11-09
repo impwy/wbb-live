@@ -1,6 +1,6 @@
 # 07-C: 방송 outbox의 Kafka 전달
 
-**Status:** in-review
+**Status:** done
 **Blocked by:** 04-B1 상태·outbox 원자 저장과 정상/권한/종료의 로컬 독립 검증(완료).05-A 제품d762510/PR8은 로컬 독립 검증 완료이며 CI는 별도 확인한다.
 **구현 담당:** 지정 대체 Codex 단독. 조정자는 설계·독립 리뷰·검증을 담당한다.
 
@@ -44,3 +44,5 @@ unknown WHIP POST 자동종결은 현재실행식별자 조회만으로 증명�
 ## 검증 인계
 
 제품 동결 후 조정자의 전체 Go race·vet, 실제 DB 재시작/TERM, Kafka 중단 Flutter camera 미디어 검사가 통과했다. 두 축 잔여 확정 결함0건. 상세 결과는 docs/verification/07c-outbox-delivery.md와 docs/reviews/07c-outbox-delivery.md를 따른다. 게시 및 CI 확인 뒤 이 하위 티켓 완료를 판정하며 부모07은미완료다.
+
+제품90921dc를 Draft PR9(https://github.com/impwy/wbb-live/pull/9)에 게시했고 backend3분1초/frontend1분23초 CI통과를확인했다.07-C하위범위완료이며merge하지않았다.

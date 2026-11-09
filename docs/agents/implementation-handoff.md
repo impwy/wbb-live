@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 07-A1 미디어 종료 계약 설계 인계
+
+07-C 제품90921dc를 Draft PR9(base work/mobile-camera)에게시했다. 조정자전체Go race·vet·DB재시작/TERM·Kafka중단제품미디어검사통과,제품해시동일,전용활성0/8090정상이다. PR9의backend/frontend CI모두통과를확인했다. 새work/media-completion-spike에서지정대체Codex에게07-A1 endpoint/schema·작업소유권·잠금수명·검증장벽의구체설계를먼저요청한다. 구현은설계검토후같은세션이단독수행한다. 기존스택교체나07-A전체완료가아니다.
+
 ### 최신: 07-C 구현 동결·독립 검증 인계
 
 지정 대체 Codex가 work/outbox-delivery의 제품/테스트 편집과 자원 조작을 중단했다고 명시했다. 기준a78a059 이후 미커밋 구현이며 조정자가15파일해시를기록했다. 구현자 전체race·vet·build·Kafka장애미디어·DB재시작/TERM 검사는통과했다. 조정자 전체Go race도통과했고 실제프로세스/DB재시작 독립검증을이어간다. 기존미디어활성0(ended34),8090 HTTP200과Kafka healthy를확인했다. 구현자는새범위시작없이대기한다. 다음07-A1범위는 .scratch/wbb-live/issues/07a1-media-completion-spike.md이며07-C독립검증/게시후별도인계한다.

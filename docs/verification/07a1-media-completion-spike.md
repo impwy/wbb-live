@@ -32,3 +32,15 @@
 등록 전에는 아직 미디어 자원을 생성할 권한이 없으므로 close가 닫힌 표식을 남기고 completed를 반환할 수 있다. 해제된 지연 POST의 Begin이 거절되는 것이 이 검사의 핵심이다. 등록 이후 인증·AddPublisher·하위 미디어 작업 장벽에서는 추적 중인 실행이 남아 있으므로 closing을 유지해야 한다.
 
 후자의 장벽은 작업 취소만으로 자동 해제되면 장시간 멈춘 실행의 반례를 재현하지 못한다. 실험 전용 hold는 명시 release 또는 전체 실험 중단으로 해제하며, arrived→close→closing 확인→release→completed 순서를 검사한다. 완료 응답 유실 장벽은 이미 증명된 종료 상태와 HTTP 응답 전달을 구분한다.
+
+## 중간 패치 독립 기초 검사
+
+조정자가 upstream `9540cb6c1d9f1e9351fcc4ded3afc249ffff22bc`의 별도 깨끗한 checkout에 SHA-256 `93061e9afc345c34510f2cfdb685e7f92ceacc73ffb05ed158b40cecc96f2f9a` 패치를 적용해 검사했다. macOS 호스트 검사이며 이후 변경이나 Linux 실제 미디어 동작을 보증하지 않는다.
+
+- `go generate ./internal/core ./internal/servers/hls`: 통과.
+- `go test -race -count=1 ./internal/wbbcompletion ./internal/servers/webrtc -run 'Test(InternalHTTP|BarrierSignature|Bootstrap|Close|Capacity|Barrier|KilledProcess|CancelledParent|AcceptedNewSession)'`: 두 패키지 통과(1.532초, 1.662초).
+- `go build ./internal/core ./internal/api ./cmd/wbb-bootstrap`: 통과.
+
+실제 두 방송, FFmpeg 수명, Linux 부트 장애 및 장벽별 미디어 검증은 아직 미완료다. 최종 변경 동결 뒤 해당 검사를 별도로 수행한다.
+
+별도 인증 fixture도 `go test -race -count=1 auth-fixture.go auth-fixture_test.go`로 독립 실행해 통과했다(1.515초). 이는 HTTP fixture의 프로토콜·행동·회차 경계 검사이며 실제 MediaMTX 인증 연결 성공을 대신하지 않는다. Linux/arm64 실험 이미지의 생성은 Docker 이미지 조회로 확인했으나 실행·미디어 인수 결과는 아직 없다.

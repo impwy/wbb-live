@@ -1,6 +1,6 @@
 # 07-A1: 미디어 작업 종료 완료 계약 스파이크
 
-**Status:** ready-for-agent
+**Status:** in-progress
 **Blocked by:** 07-C 구현 동결 및 검증 인계. 제품 구현자는 지정 세션 한 명이며 동시에 진행하지 않는다.
 **목표:** ADR0001의 종료 증거 계약을 실제 고정 MediaMTX에서 구현·반증한 뒤 제품 통합 가능 여부를 판정한다.
 
@@ -26,3 +26,11 @@
 ## 이후 제품 통합
 
 이 스파이크만으로07-A 또는 필수 종료 요구사항을 완료하지 않는다. 별도 통합에서 DB귀속 commit 후전송, upstream4xx 즉시closed 경로 제거, worker5초부재 기반종료 대체를 수행한다. 공개API·실제DB에서 STOPPING/권한폐기→완료근거→FFmpeg종료·최신자원조회→ENDED를 검증한다. 실제기기/외부망/VAAPI/ABR 인수는 별도로 남는다.
+
+## 구현 설계 검토 결정
+
+lifecycle 조회, operation close/query, 기존 전용WHIP의tuple+정확경로+SDP해시 HMAC 계약으로 격리실험구현을진행한다. slot anchor는bootstrap시고정하는불변설정이며매부트갱신하는두번째epoch저장소로확장하지않는다. 기동시anchor/slot/기존이력을먼저검증하고같은inode잠금을획득한뒤새epoch를영속화한다. 불일치이력에새epoch를먼저써복구를어렵게하지않는다.
+
+query의실행중상태와never-registered를completed와구별한다. duplicatePOST는새세션을만들지않으며다른경로/본문충돌도거절한다. close가참조하는작업실행수에그close조회handler자신을넣어영원히완료되지않는구조를피한다. 생성handler와그가위임한세션/하위작업만종료대상소유권으로추적한다.
+
+기존media서비스의권한/상태계약은이실험중유지한다. 실제upstream소유권연결과최소회귀를먼저보고하고,전체장애장벽/두방송/epoch회귀완료후독립검증에인계한다.

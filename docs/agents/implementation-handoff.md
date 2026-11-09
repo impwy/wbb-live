@@ -4,9 +4,9 @@
 
 ## 지정 세션과 현재 상태
 
-### 최신: 07-A1 미디어 종료 계약 설계 인계
+### 최신: 07-A1 미디어 종료 계약 구현 인계
 
-07-C 제품90921dc를 Draft PR9(base work/mobile-camera)에게시했다. 조정자전체Go race·vet·DB재시작/TERM·Kafka중단제품미디어검사통과,제품해시동일,전용활성0/8090정상이다. PR9의backend/frontend CI모두통과를확인했다. 새work/media-completion-spike에서지정대체Codex에게07-A1 endpoint/schema·작업소유권·잠금수명·검증장벽의구체설계를먼저요청한다. 구현은설계검토후같은세션이단독수행한다. 기존스택교체나07-A전체완료가아니다.
+07-C 제품90921dc를 Draft PR9(base work/mobile-camera)에게시했다. 조정자전체Go race·vet·DB재시작/TERM·Kafka중단제품미디어검사통과,제품해시동일,전용활성0/8090정상이다. PR9의backend/frontend CI모두통과를확인했다. 새work/media-completion-spike에서지정대체Codex에게07-A1 endpoint/schema·작업소유권·잠금수명·검증장벽의구체설계를먼저요청한다. endpoint/HMAC/작업소유권과불변bootstrap anchor검토를마쳤고같은세션에실험영역단독구현을지시했다. 기존스택교체나07-A전체완료가아니다.
 
 ### 최신: 07-C 구현 동결·독립 검증 인계
 

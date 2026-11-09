@@ -28,6 +28,8 @@ type Config struct {
 
 	CORSOrigins        []string
 	StaticDir          string
+	MediaWHIPURL       string // private MediaMTX signaling base, empty disables media
+	MediaSecret        []byte // shared only within the isolated media network
 	GoogleClientID     string
 	GoogleClientSecret string
 	GoogleCallbackURI  string
@@ -55,6 +57,8 @@ func Load() (Config, error) {
 		RateLimitAccountRequests: 10,
 		RateLimitWindow:          time.Minute,
 		StaticDir:                os.Getenv("WBB_STATIC_DIR"),
+		MediaWHIPURL:             os.Getenv("WBB_MEDIA_WHIP_URL"),
+		MediaSecret:              []byte(os.Getenv("WBB_MEDIA_SECRET")),
 		GoogleClientID:           os.Getenv("WBB_GOOGLE_CLIENT_ID"),
 		GoogleClientSecret:       os.Getenv("WBB_GOOGLE_CLIENT_SECRET"),
 		GoogleCallbackURI:        os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
@@ -64,6 +68,15 @@ func Load() (Config, error) {
 	}
 	if cfg.Env != "dev" && cfg.Env != "prod" {
 		return cfg, fmt.Errorf("WBB_ENV must be \"dev\" or \"prod\", got %q", cfg.Env)
+	}
+	if cfg.MediaWHIPURL != "" {
+		u, err := url.Parse(cfg.MediaWHIPURL)
+		if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return cfg, errors.New("WBB_MEDIA_WHIP_URL must be a private HTTP origin")
+		}
+		if len(cfg.MediaSecret) < 32 {
+			return cfg, errors.New("WBB_MEDIA_SECRET must be at least 32 bytes when media is enabled")
+		}
 	}
 	googleCount := 0
 	for _, v := range []string{cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleCallbackURI} {

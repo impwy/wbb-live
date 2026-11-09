@@ -65,6 +65,8 @@ func NewService(pool *pgxpool.Pool, tokens *auth.TokenManager) *Service {
 	return &Service{db: pool, tokens: tokens, now: time.Now, mediaCreationDisabled: true}
 }
 
+func (s *Service) EnableMedia() { s.mediaCreationDisabled = false }
+
 func (s *Service) SetClock(now func() time.Time) {
 	s.nowMu.Lock()
 	s.now = now

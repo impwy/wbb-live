@@ -1,0 +1,108 @@
+name: wbb-local-secure-media
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wbb
+      POSTGRES_PASSWORD: ${WBB_DB_PASSWORD:?required}
+      POSTGRES_DB: wbb
+    volumes: [pg-data:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:55438:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wbb -d wbb"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [private]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [private]
+
+  api:
+    build:
+      context: ../../wbb-backend
+      dockerfile: Dockerfile.media
+      target: api
+    environment:
+      WBB_ENV: dev
+      WBB_ADDR: :8080
+      WBB_DATABASE_URL: ${WBB_DATABASE_URL:?required}
+      WBB_REDIS_ADDR: redis:6379
+      WBB_JWT_SECRET: ${WBB_JWT_SECRET:?required}
+      WBB_CORS_ORIGINS: https://localhost:19443
+      WBB_MEDIA_WHIP_URL: http://mediamtx:8889
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+    networks: [private]
+    restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg@sha256:208e9f1740a09a5ee63b6308e77ce0d54fce0456462f640e6bd9acfc62ebb5a2
+    command: ["/run/config/mediamtx.yml"]
+    volumes: ["./mediamtx.yml:/run/config/mediamtx.yml:ro"]
+    ports: ["127.0.0.1:19391:19391/udp"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [private]
+    restart: unless-stopped
+
+  worker:
+    container_name: wbb-local-secure-media-worker
+    init: true
+    build:
+      context: ../../wbb-backend
+      dockerfile: Dockerfile.media
+      target: worker
+    environment:
+      WBB_DATABASE_URL: ${WBB_DATABASE_URL:?required}
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+      WBB_MEDIA_API_URL: http://mediamtx:9997
+      WBB_MEDIA_HLS_URL: http://mediamtx:8888
+      WBB_MEDIA_WHIP_URL: http://mediamtx:8889
+      WBB_MEDIA_RTSP_HOST: mediamtx:8554
+      WBB_MEDIA_LOCK_FILE: /run/wbb-worker/worker.lock
+    volumes: [worker-lock:/run/wbb-worker]
+    depends_on:
+      api: {condition: service_healthy}
+      mediamtx: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+    ports: ["127.0.0.1:19443:19443"]
+    depends_on:
+      api: {condition: service_healthy}
+      mediamtx: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+
+networks:
+  private: {driver: bridge}
+
+volumes:
+  pg-data:
+  worker-lock:
+  caddy-data:
+  caddy-config:

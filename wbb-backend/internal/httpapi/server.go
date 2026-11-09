@@ -32,6 +32,7 @@ type Server struct {
 	db           *pgxpool.Pool
 	log          *slog.Logger
 	googleClient *http.Client
+	mediaClient  *http.Client
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
 	// production uses time.Now.
@@ -42,7 +43,11 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: livesessions.NewService(dbPool, auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)), redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	sessions := livesessions.NewService(dbPool, auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL))
+	if cfg.MediaWHIPURL != "" {
+		sessions.EnableMedia()
+	}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient()}
 }
 
 // RunMaintenance reconciles durable preparation timeouts independently of
@@ -72,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
 	})
 	mux.HandleFunc("GET /api/v1/health/ready", s.handleReady)
+	mux.HandleFunc("POST /internal/mediamtx/auth", s.handleMediaMTXAuth)
 
 	mux.HandleFunc("POST /api/v1/auth/register", s.rateLimit("register", requireOrigin(s, s.handleRegister)))
 	mux.HandleFunc("POST /api/v1/auth/login", s.rateLimit("login", requireOrigin(s, s.handleLogin)))
@@ -89,8 +95,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/broadcasts/{id}", s.requireAuth(s.handleDeleteBroadcast))
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions", s.requireAuth(requireOrigin(s, s.handleStartSession)))
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}/sessions/current", s.handleCurrentSession)
+	mux.HandleFunc("GET /api/v1/broadcasts/{id}/playback", s.handlePlayback)
+	mux.HandleFunc("GET /internal/hls-authorize", s.handleHLSAuthorize)
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/stop", s.requireAuth(requireOrigin(s, s.handleStopSession)))
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/publish-grants", s.requireAuth(requireOrigin(s, s.handleRenewGrant)))
+	mux.HandleFunc("POST /api/v1/live-sessions/{sid}/whip", requireOrigin(s, s.handleWHIPPost))
+	mux.HandleFunc("PATCH /api/v1/live-sessions/{sid}/whip/{resource}", s.requireAuth(requireOrigin(s, s.handleWHIPResource)))
+	mux.HandleFunc("DELETE /api/v1/live-sessions/{sid}/whip/{resource}", s.requireAuth(requireOrigin(s, s.handleWHIPResource)))
 
 	var root http.Handler
 	if s.cfg.StaticDir != "" {

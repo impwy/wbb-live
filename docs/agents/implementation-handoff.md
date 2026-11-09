@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 04-B1 독립 검증 완료, 04-B2 준비
+
+work/local-secure-media의 서버 인터페이스와 정상·권한 차단·종료·장애 경계를 검증했다. 지정 대체 Codex는 제품과 전용 스택을 동결하고 대기 중이다. 조정자의 전체 Go race/vet, Linux9개, 추가 응답 유실 fixture, 실제 worker SIGKILL·자동 재시작·새 시청자33프레임·최종자원부재, 실제 pending LL-HLS 요청 종료(약2.1초404)가 통과했다. 두 축 정적 잔여0건이다. `.scratch/wbb-live/issues/04b-local-secure-media.md`의04-B2 계약에 따라 Flutter PC 송출·익명 시청을 다음 구현으로 인계한다. 주소 없는 unknown POST 자동 회수는04-B/07에서 미완료로 유지하며 전체04-B 완료를 의미하지 않는다. 최신 리뷰·검증 문서는 docs/reviews/04b-local-secure-media.md와 docs/verification/04b-local-secure-media.md다. 기존8090/CPU서비스는 유지한다.
+
 ### 최신: 04-B1 설계 승인·구현 재개
 
 04-A 게시 체크포인트는03ee70c, [Draft PR5](https://github.com/impwy/wbb-live/pull/5), base work/media-device-acceptance다. 새 브랜치work/local-secure-media에서 지정 대체 Codex에게04-B1 구체 설계 보고를 요청했다. 보고 대상은 미디어 worker 감독/재시작 회수, MediaMTX 인증과 Caddy HLS 인가, WHIP 중계·응답 유실 계약이다. 설계 검토와 독립 보완을 티켓에 반영했다. 해당 worker namespace의 프로세스 신원 검증, lease fencing, HLS 종료 경합 기준을 확정하고 지정 대체 Codex에게04-B1 구현 재개를 지시한다. 조정자는04-A 독립 검사·리뷰를 마쳤고 실제 기기/외부망 인수는 여전히 미완료다.

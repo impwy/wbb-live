@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -20,6 +21,8 @@ const (
 var (
 	ErrTokenInvalid = errors.New("token is invalid or expired")
 )
+
+var claimUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // AccessClaims is the login access JWT payload. sid/fid reference the active
 // auth_sessions row and its refresh family; sub is the user id.
@@ -112,4 +115,26 @@ func (m *TokenManager) IssuePublish(userID, broadcastID, sessionID, familyID, jt
 		FamilyID: familyID, Generation: generation,
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
+}
+
+// VerifyPublish accepts only the short-lived, single-purpose publish
+// audience. Database state is checked separately before an upstream create.
+func (m *TokenManager) VerifyPublish(token string) (*PublishClaims, error) {
+	parsed, err := jwt.ParseWithClaims(token, &PublishClaims{},
+		func(t *jwt.Token) (any, error) {
+			if t.Method != jwt.SigningMethodHS256 {
+				return nil, ErrTokenInvalid
+			}
+			return m.secret, nil
+		},
+		jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(issuer),
+		jwt.WithAudience(AudiencePublish), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
+	if err != nil || !parsed.Valid {
+		return nil, ErrTokenInvalid
+	}
+	claims, ok := parsed.Claims.(*PublishClaims)
+	if !ok || claims.IssuedAt == nil || claims.ExpiresAt == nil || !claimUUID.MatchString(claims.Subject) || !claimUUID.MatchString(claims.BroadcastID) || !claimUUID.MatchString(claims.SessionID) || !claimUUID.MatchString(claims.FamilyID) || !claimUUID.MatchString(claims.ID) || claims.Generation < 1 {
+		return nil, ErrTokenInvalid
+	}
+	return claims, nil
 }

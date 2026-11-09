@@ -1,0 +1,16 @@
+FROM golang:1.27.3-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/wbb-api ./cmd/wbb-api && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/wbb-media-worker ./cmd/wbb-media-worker
+
+FROM alpine:3.22 AS api
+RUN apk add --no-cache ca-certificates
+COPY --from=build /out/wbb-api /usr/local/bin/wbb-api
+ENTRYPOINT ["/usr/local/bin/wbb-api"]
+
+FROM bluenviron/mediamtx:1.21.3-ffmpeg@sha256:208e9f1740a09a5ee63b6308e77ce0d54fce0456462f640e6bd9acfc62ebb5a2 AS worker
+COPY --from=build /out/wbb-media-worker /usr/local/bin/wbb-media-worker
+ENTRYPOINT ["/usr/local/bin/wbb-media-worker"]

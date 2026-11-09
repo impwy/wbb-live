@@ -41,3 +41,27 @@ WHIP은 RFC9725를 기준으로 고정 MediaMTX 버전에서 검증한 Content-T
 추가 경합 기준: 증가하는 fencing token을 작업 할당·상태 반영·worker 내부 자격 검증에 포함한다. lease 만료만으로 이전 worker가 사라졌다고 판단하지 않으며 DB 단절 시 신규 시작을 거절하고 lease 갱신 실패 작업을 안전하게 종료한다. 이전 RTSP 연결은 자격 재검사에만 의존하지 않고 명시적으로 종료한다.
 
 HLS 인가 직후 stop 및 대기 중 `_HLS_msn` blocking reload를 검사한다. 이미 승인된 요청은 회차 경로 제거/연결 취소 또는 명시한 유한 최대 대기시간으로 끝내며 no-store만으로 진행 중 응답 취소를 주장하지 않는다.
+
+### 재시작 소유권 보완
+
+동일 로컬 named volume의 고정 lock inode를 모든 worker가 사용하며 파일/볼륨 교체로 우회하지 않는다. 잠긴 동일 open-file-description의 FD를 FFmpeg에 ExtraFiles로 상속하고 실제 유지 여부를 검사한다. 명시적 LOCK_UN은 자식 FD의 잠금도 해제하므로 사용하지 않고 각 소유자는 close만 수행한다. 마지막 보유자 종료 후에만 새 worker가 배타 잠금을 획득한다. worker 수명이 끝나면 컨테이너 PID namespace도 끝나는 실행 구성을 실제 kill/restart로 검증한다. 구형 비상속 실행에는 이 증명을 적용하지 않는다. [Linux flock](https://man7.org/linux/man-pages/man2/flock.2.html), [PID namespace](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html)의 동작을 근거로 하되 실제 고정 FFmpeg 이미지의 FD 유지가 필수 관문이다.
+
+미해결 POST 잔존 상한을 입증하지 못하면 pending을 유지한다. client timeout을 서버 실행 상한으로 사용하지 않는다. 생성 권한 폐기 시점 이후 실제 MediaMTX handshake/인증/취소 상한과 새 전체 조회를 결합하고, 이미 인가된 뒤 늦게 나타나는 연결의 kick을 검증한다.
+
+## 04-B2 구현 인계 계약
+
+04-B1의 인증·정상 미디어·장애 시 권한 차단 인터페이스 검증 후 시작한다. unknown POST 자동 회수는 04-B/07에서 미완료로 추적하며 완료로 간주하지 않는다. 다음은 현재 Flutter/실험 코드를 읽은 독립 설계 검토를 반영한 계약이며 새 제품 구현을 병렬로 시작하지 않는다.
+
+- 화면은 미디어 조정자에 시작/종료를 요청하고 상태만 표시한다. 브라우저 송출 모듈이 capture·WebAudio·PC·미리보기를, 재생 모듈이 hls.js·video·리스너/타이머를 소유한다. 인터페이스의 목적은 자원 소유와 테스트 경계를 분명히 하는 것이며 불필요한 추상 계층은 만들지 않는다.
+- 시작 클릭에서 첫 await 또는 API/마이크 요청 전에 getDisplayMedia를 호출한다. bridge는 클릭 전에 준비한다. 원본 display 트랙을 얻는 즉시 정리 함수와 ended 리스너를 등록한다. 마이크 확보·혼합 성공 후 회차를 생성한다. 권한 취소로 서버 회차를 만들지 않는다. H264 사전 검사·선호 코덱 설정·실제 협상 확인은 현재 app.js에 없으므로 별도 구현/검증한다.
+- 기존 prepareSession은 session만 반환하며 grant를 버린다. 준비 응답을 session+publishGrant의 비공개 타입으로 받아 grant를 메모리에만 유지하도록 확장한다. 새 발급 endpoint를 임의로 만들지 않고 기존 생성/renew 계약을 따른다. 공개 LiveSession 모델에 grant를 넣지 않는다.
+- JSON 요청과 SDP/ICE 요청을 구분한다. WHIP POST는 publish grant, PATCH/DELETE는 현재 access JWT를 사용한다. access token을 UI/전역 JS에 노출하는 getter 대신 인증 transport 경계로 처리한다. 동일 출처·해당 회차 Location과 ETag를 검증한다. 결과 불명 POST를 자동 재전송하지 않는다.
+- 각 시도는 attempt/auth epoch와 정확한 회차/자원을 소유한다. 모든 await 뒤 유효성을 검사한다. 늦은 capture는 즉시 정리, 늦은 회차 응답은 그 회차만 stop, 늦은 WHIP201은 그 resource만 정리한다. 이전 작업이 새 회차/플레이어를 정리할 수 없어야 한다.
+- 종료는 먼저 시도를 무효화하고 로컬 트랙·PC를 즉시 닫고 AudioContext 종료를 추적한다. 네트워크 종료 실패는 성공으로 표시하지 않는다. 화면 dispose 이후에도 서버 정리를 이어갈 수 있는 소유권을 둔다. 탭 종료 요청 전달은 보장하지 않으며 서버 감시를 최종 정리 근거로 사용한다.
+- 로그아웃 요청 시작 때 로컬 송출을 중단한다. 로그아웃 API 실패 시 기존 로그인 상태는 유지하되 캡처를 자동 재개하지 않는다. 인증 만료도 같은 정리 경로를 사용한다. 늦은 refresh 응답으로 폐기한 인증이 복원되지 않도록 기존 인증 코드의 epoch 경계를 검증한다.
+- 공유 음원 누락 안내, 마이크 실패 시 전체 정리, 두 입력 gain0.5, muted/playsinline 미리보기, AudioContext running/재개 안내를 제공한다. 실제 사용자 pause는 재시도·poll·fallback이 해제하지 않는다. 서버 LIVE와 playback 응답 전 재생 비활성화, 회차 변경/종료 시 이전 플레이어 완전 정리를 유지한다.
+- Flutter 동작 검사는 권한 취소/부분 실패/중복 클릭/늦은 응답/화면 이탈/로그아웃/회차 변경/pause 유지를 포함한다. 실제 독립 Chrome 프로세스로 합성 영상 decoded frames와 두 음원 수신, 원본 트랙·PC·AudioContext 및 ingress/FFmpeg 종료를 검사한다. 실제 화면 선택·마이크 청취·두 물리 기기·외부망 인수는 별도다.
+
+## 서버 체크포인트와 다음 구현
+
+04-B1 정상 미디어·권한·종료·장애 경계를 검증했고 두 축 정적 리뷰 잔여0건이다. 조정자 실제 worker SIGKILL·자동 재시작·새 시청자33프레임·최종자원회수 및 pending LL-HLS 요청 종료(약2.1초404)를 독립 확인했다. 서버 인터페이스를 기반으로04-B2 Flutter 통합을 진행한다. 주소 없는unknown POST 자동회수는04-B/07에 남기며 부모04-B는in-progress를유지한다.

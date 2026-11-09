@@ -36,3 +36,7 @@ Connected/Failed의단순상태관찰goroutine은미디어/생성/자원보유�
 무작위 epoch ID와 별도 sequence, 정확한 과거 ID 조회가 추가됐다. session.initialize에서 context 초기화 후 AttachSession을 등록하고 goroutine을 시작하도록 순서를 수정한 것도 확인했다. 기초 registry 검사 통과 보고를 받았으나 프로토콜 패키지의 `[no tests to run]` 결과는 컴파일 확인이며 실제 송출 종료 회귀 통과로 보지 않는다.
 
 추가 독립 소스 검토에서 path.RemovePublisher의 취소 후 done 대기는 현재 RTSP/RTMP/SRT publisher.Close가 취소만 하므로 새 순환 대기를 만들지 않는 것으로 확인됐다. inbound reader join을 Pion GracefulClose 뒤에 둔 순서도 타당하다. 실제 RTSP path 종료, RTP callback 진행 중 close, PLI 대기 중 close 검사는 여전히 필요하다.
+
+## 범위 일치 검토
+
+초기 validateCompletionConf는 RTSP를 모두 거절하고 WHIP 발행·HLS 읽기만 허용했다. 이는 기존 WHIP→RTSP→FFmpeg→RTSP 출력→LL-HLS 구성과 두 방송의 변환 프로세스 보존 검증을 충족하지 못한다. 추적 대상 ingress의 계약 없는 발행을 막되, 내부 변환기의 RTSP 읽기·출력을 경로와 권한으로 제한해 지원하도록 수정 요청했다. 쉬운 직접 HLS 경로만 통과한 것으로 전체 스파이크 완료를 대신하지 않는다.

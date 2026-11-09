@@ -92,7 +92,7 @@ async function main() {
     },{email,password}));
     token=setup.access;broadcastId=setup.bid;session=setup.sid;
     const result=await finite('product capture/WHIP',22000,()=>page.evaluate(async grant => {
-      const key=window.WbbMedia.newPublisher(()=>{});
+      const key=window.WbbMedia.newPublisher('screen',()=>{});
       window.__diagnostic.key=key;
       const offered=JSON.parse(await window.WbbMedia.captureOffer(key));
       const pc=window.__diagnostic.pcs[0];

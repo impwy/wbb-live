@@ -13,8 +13,9 @@ import 'package:wbb_frontend/screens/broadcast_detail_screen.dart';
 import 'package:wbb_frontend/state/auth_controller.dart';
 
 class ClickAttempt implements PublisherMediaAttempt {
-  ClickAttempt({this.initialAudioRunning = true});
+  ClickAttempt({this.initialAudioRunning = true, this.sharedAudio = true});
   final bool initialAudioRunning;
+  final bool sharedAudio;
   int captures = 0;
   int stops = 0;
   int resumes = 0;
@@ -26,7 +27,7 @@ class ClickAttempt implements PublisherMediaAttempt {
     return Future.value(
       CaptureOffer(
         sdp: 'v=0',
-        sharedAudio: true,
+        sharedAudio: sharedAudio,
         audioRunning: initialAudioRunning,
       ),
     );
@@ -63,8 +64,10 @@ class ViewingPlayer implements ViewerMediaPlayer {
 class ViewingMedia implements MediaPlatform {
   final players = <ViewingPlayer>[];
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
-      ClickAttempt();
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => ClickAttempt();
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) {
     final player = ViewingPlayer();
@@ -117,8 +120,16 @@ Future<void> pumpDetail(
 class ClickMedia implements MediaPlatform {
   ClickMedia(this.attempt);
   final ClickAttempt attempt;
+  final sources = <PublishSource>[];
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) => attempt;
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) {
+    sources.add(source);
+    return attempt;
+  }
+
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
       throw UnimplementedError();
@@ -145,7 +156,28 @@ class PendingMedia implements MediaPlatform {
   PendingMedia(this.attempt);
   final PendingAttempt attempt;
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) => attempt;
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => attempt;
+  @override
+  ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
+      throw UnimplementedError();
+}
+
+class QueuePendingMedia implements MediaPlatform {
+  QueuePendingMedia(this.attempts);
+  final List<PendingAttempt> attempts;
+  int created = 0;
+  @override
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) {
+    created++;
+    return attempts.removeAt(0);
+  }
+
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
       throw UnimplementedError();
@@ -158,6 +190,201 @@ http.Response response(Object body, [int status = 200]) => http.Response(
 );
 
 void main() {
+  for (final lifecycle in [true, false]) {
+    testWidgets(
+      'pending camera permission stop ${lifecycle ? 'hidden/resumed' : 'JS-first'} allows a new attempt',
+      (tester) async {
+        final first = PendingAttempt(), second = PendingAttempt();
+        final media = QueuePendingMedia([first, second]);
+        var prepareCalls = 0;
+        final api = ApiClient(
+          baseUrl: 'https://live.test/api/v1',
+          client: MockClient((request) async {
+            final path = request.url.path;
+            if (path.endsWith('/auth/login')) {
+              return response({
+                'accessToken': 'access',
+                'user': {'id': 'u1', 'email': 'a@b.c', 'displayName': 'A'},
+              });
+            }
+            if (path.endsWith('/broadcasts/b1') && request.method == 'GET') {
+              return response({'broadcast': broadcastJson()});
+            }
+            if (path.endsWith('/sessions/current')) {
+              return response({'session': null});
+            }
+            if (path.endsWith('/sessions') && request.method == 'POST') {
+              prepareCalls++;
+            }
+            fail('unexpected ${request.method} $path');
+          }),
+        );
+        final auth = AuthController(api);
+        await auth.login('a@b.c', 'pw');
+        final publisher = LivePublisher(api, media);
+        await pumpDetail(tester, api, auth, publisher, media);
+        await tester.tap(find.byKey(const Key('session-prepare-camera')));
+        await tester.pump();
+        expect(publisher.phase, PublishPhase.capturing);
+        if (lifecycle) {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          await tester.pump();
+          expect(first.stops, 0);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.hidden,
+          );
+          await tester.pump();
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        } else {
+          await publisher.stop(); // same callback path as browser pagehide
+        }
+        await tester.pumpAndSettle();
+        expect(first.stops, greaterThan(0));
+        final restart = tester.widget<FilledButton>(
+          find.byKey(const Key('session-prepare-camera')),
+        );
+        expect(restart.onPressed, isNotNull);
+        await tester.tap(find.byKey(const Key('session-prepare-camera')));
+        await tester.pump();
+        expect(media.created, 2);
+        expect(publisher.phase, PublishPhase.capturing);
+        first.capture.complete(
+          const CaptureOffer(sdp: 'v=0', sharedAudio: true, audioRunning: true),
+        );
+        await tester.pump();
+        expect(prepareCalls, 0);
+        expect(publisher.phase, PublishPhase.capturing);
+        await publisher.stop();
+        second.capture.completeError(Exception('cancelled'));
+        await tester.pump();
+      },
+    );
+  }
+
+  for (final selected in PublishSource.values) {
+    testWidgets(
+      '${selected.name} button prepares matching source and hides safely',
+      (tester) async {
+        final attempt = ClickAttempt(sharedAudio: false);
+        final media = ClickMedia(attempt);
+        var prepared = false, stopping = false, stops = 0, detailReads = 0;
+        String? preparedSource;
+        final api = ApiClient(
+          baseUrl: 'https://live.test/api/v1',
+          client: MockClient((request) async {
+            final path = request.url.path;
+            if (path.endsWith('/auth/login')) {
+              return response({
+                'accessToken': 'access',
+                'user': {'id': 'u1', 'email': 'a@b.c', 'displayName': 'A'},
+              });
+            }
+            if (path.endsWith('/broadcasts/b1') && request.method == 'GET') {
+              detailReads++;
+              return response({
+                'broadcast': broadcastJson(
+                  status: stopping
+                      ? 'stopping'
+                      : prepared
+                      ? 'starting'
+                      : 'ready',
+                ),
+              });
+            }
+            if (path.endsWith('/sessions/current')) {
+              return response({
+                'session': prepared
+                    ? sessionJson('s1', stopping ? 'stopping' : 'starting')
+                    : null,
+              });
+            }
+            if (path.endsWith('/broadcasts/b1/sessions') &&
+                request.method == 'POST') {
+              prepared = true;
+              preparedSource =
+                  (jsonDecode(request.body) as Map<String, dynamic>)['source']
+                      as String;
+              return response({
+                'session': sessionJson('s1', 'starting'),
+                'publishGrant': {
+                  'token': 'grant',
+                  'whipUrl': '/api/v1/live-sessions/s1/whip',
+                  'expiresAt': '2026-11-09T01:00:30Z',
+                },
+              }, 202);
+            }
+            if (path.endsWith('/whip') && request.method == 'POST') {
+              return http.Response(
+                'v=0\r\nanswer',
+                201,
+                headers: {
+                  'content-type': 'application/sdp',
+                  'location': '/api/v1/live-sessions/s1/whip/r1',
+                },
+              );
+            }
+            if (path.endsWith('/whip/r1') && request.method == 'DELETE') {
+              return http.Response('', 204);
+            }
+            if (path.endsWith('/sessions/s1/stop') &&
+                request.method == 'POST') {
+              stops++;
+              stopping = true;
+              return response({'session': sessionJson('s1', 'stopping')}, 202);
+            }
+            fail('unexpected ${request.method} $path');
+          }),
+        );
+        final auth = AuthController(api);
+        await auth.login('a@b.c', 'pw');
+        final publisher = LivePublisher(api, media);
+        await pumpDetail(tester, api, auth, publisher, media);
+        await tester.tap(
+          find.byKey(
+            Key(
+              selected == PublishSource.camera
+                  ? 'session-prepare-camera'
+                  : 'session-prepare',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(media.sources, [selected]);
+        expect(preparedSource, selected.name);
+        expect(publisher.phase, PublishPhase.publishing);
+        expect(
+          find.text('공유 소리가 없습니다. 소리를 포함한 탭을 다시 선택해 주세요.'),
+          selected == PublishSource.camera ? findsNothing : findsOneWidget,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        await tester.pump();
+        expect(attempt.stops, 0);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        await tester.pumpAndSettle();
+        expect(attempt.stops, selected == PublishSource.camera ? 1 : 0);
+        expect(stops, selected == PublishSource.camera ? 1 : 0);
+        final beforeResume = detailReads;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        expect(detailReads, greaterThan(beforeResume));
+        expect(media.sources, [selected]); // no automatic restart
+        if (selected == PublishSource.screen) {
+          await tester.tap(find.byKey(const Key('session-cancel')));
+          await tester.pumpAndSettle();
+          expect(attempt.stops, 1);
+        }
+      },
+    );
+  }
+
   testWidgets(
     'leaving owner detail stops active capture before permission resolves',
     (tester) async {

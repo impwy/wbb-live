@@ -1,6 +1,6 @@
 # 05-A: 단일 품질 모바일 카메라·마이크 송출
 
-**Status:** in-progress
+**Status:** in-review
 **Blocked by:** 04-B1/04-B2 정상·권한·종료 미디어 인터페이스의 로컬 독립 검증 완료.03 ABR는 선행이 아니다. 부모04-B의 unknown POST 회수는07에 남기며 실제 기기 인수는 별도 유지한다.
 **구현 담당:** 지정 pi 또는 사용자 승인 대체 Codex의 현재 단독 구현자.
 
@@ -29,3 +29,8 @@
 ## 구현 인계
 
 04-B2 제품9a91b3b, Draft PR7의 독립검증을 기준으로work/mobile-camera에서 지정 대체 Codex가 단독 구현한다. source 선택을 캡처와 prepare 요청에 일관되게 전달하고 camera에는 화면 공유 음원 경고를 표시하지 않는다. 카메라·마이크 지원 PC에서도 같은camera경로를 재사용할 수 있게 하되 모바일 실제인수와 PC카메라 확인을 구분한다. 실제기기없이 지원환경을 확정하지 않는다.
+
+
+## 로컬 결과
+
+카메라·마이크 제품 경로와 정상/합성숨김 종료를 조정자가 독립 검증했다. 두 축 리뷰 잔여 확정0건이며 실제iPhone·물리기기·외부망은 미완료로 남긴다. docs/verification/05a-mobile-single-rendition.md와 docs/reviews/05a-mobile-single-rendition.md를 따른다. 실제 인수 전 전체05-A 완료로 표시하지 않는다.

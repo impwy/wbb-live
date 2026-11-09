@@ -5,16 +5,19 @@
   const viewers = new Map();
   let nextId = 0;
   const id = () => String(++nextId);
-  const stopped = a => a.closed || a.displayVideo?.readyState === 'ended';
+  const stopped = a => a.closed || a.videoTrack?.readyState === 'ended';
   const stopTracks = stream => stream?.getTracks().forEach(t => { if (t.readyState !== 'ended') t.stop(); });
 
   function disposeAttempt(a) {
     a.closed = true;
     stopTracks(a.display);
+    stopTracks(a.camera);
     stopTracks(a.mic);
     stopTracks(a.mixed);
     stopTracks(a.dest?.stream);
     try { a.pc?.close(); } catch (_) {}
+    document.removeEventListener?.('visibilitychange', a.onVisibility);
+    window.removeEventListener?.('pagehide', a.onPageHide);
     if (a.preview.srcObject) a.preview.srcObject = null;
     const closing = a.audio && a.audio.state !== 'closed' ? a.audio.close() : Promise.resolve();
     return Promise.resolve(closing).catch(() => {});
@@ -25,6 +28,13 @@
     if (!a) return Promise.resolve();
     publishers.delete(key);
     return disposeAttempt(a);
+  }
+
+  function endAttempt(a) {
+    if (a.closed) return;
+    // Release local tracks before crossing into Dart/server cleanup.
+    void stopPublisher(a.key);
+    a.onEnded();
   }
 
   async function resumeAudio(key) {
@@ -49,41 +59,60 @@
   async function captureOffer(key) {
     const a = publishers.get(key);
     if (!a || a.closed) throw new Error('capture cancelled');
-    // Must be the first asynchronous browser operation after the click.
+    // Device acquisition must be the first asynchronous operation after click.
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 }, audio: {}, selfBrowserSurface: 'exclude',
-      });
-      a.display = display; // register originals before any other await
-      const video = display.getVideoTracks()[0];
-      a.displayVideo = video;
-      if (!video) throw new Error('screen video is required');
-      video.addEventListener('ended', () => { if (!a.closed) a.onEnded(); }, { once: true });
-      if (stopped(a)) throw new Error('capture cancelled');
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      a.mic = mic;
-      if (stopped(a)) throw new Error('capture cancelled');
-      if (!mic.getAudioTracks().length) throw new Error('microphone is required');
-      const audio = new AudioContext();
-      a.audio = audio;
-      const dest = audio.createMediaStreamDestination();
-      a.dest = dest;
-      const shared = display.getAudioTracks();
-      if (shared.length) {
-        const gain = audio.createGain(); gain.gain.value = 0.5;
-        audio.createMediaStreamSource(new MediaStream(shared)).connect(gain).connect(dest);
+      let video, sound, sharedAudio = true, audioRunning = true;
+      if (a.source === 'camera') {
+        const camera = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: true,
+        });
+        a.camera = camera; // register all tracks before any other await
+        video = camera.getVideoTracks()[0];
+        sound = camera.getAudioTracks()[0];
+        if (!video || !sound) throw new Error('camera video and microphone are required');
+        a.videoTrack = video;
+        if (stopped(a) || sound.readyState === 'ended') throw new Error('capture cancelled');
+        a.mixed = new MediaStream([video, sound]);
+        sound.addEventListener('ended', () => endAttempt(a), { once: true });
+      } else {
+        const display = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 30 }, audio: {}, selfBrowserSurface: 'exclude',
+        });
+        a.display = display; // register originals before any other await
+        video = display.getVideoTracks()[0];
+        a.videoTrack = video;
+        if (!video) throw new Error('screen video is required');
+        video.addEventListener('ended', () => endAttempt(a), { once: true });
+        if (stopped(a)) throw new Error('capture cancelled');
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        a.mic = mic;
+        if (stopped(a)) throw new Error('capture cancelled');
+        if (!mic.getAudioTracks().length) throw new Error('microphone is required');
+        const audio = new AudioContext();
+        a.audio = audio;
+        const dest = audio.createMediaStreamDestination();
+        a.dest = dest;
+        const shared = display.getAudioTracks();
+        sharedAudio = shared.length > 0;
+        if (shared.length) {
+          const gain = audio.createGain(); gain.gain.value = 0.5;
+          audio.createMediaStreamSource(new MediaStream(shared)).connect(gain).connect(dest);
+        }
+        const micGain = audio.createGain(); micGain.gain.value = 0.5;
+        audio.createMediaStreamSource(mic).connect(micGain).connect(dest);
+        // Resume can require a later user gesture; never block capture forever.
+        try {
+          await Promise.race([audio.resume(), new Promise(resolve => setTimeout(resolve, 1500))]);
+        } catch (_) {}
+        if (stopped(a)) throw new Error('capture cancelled');
+        sound = dest.stream.getAudioTracks()[0];
+        audioRunning = audio.state === 'running';
+        a.mixed = new MediaStream([video, sound]);
       }
-      const micGain = audio.createGain(); micGain.gain.value = 0.5;
-      audio.createMediaStreamSource(mic).connect(micGain).connect(dest);
-      // resume may need another user gesture on some browsers; the UI reports
-      // its observed state rather than claiming shared audio is audible.
-      try {
-        await Promise.race([audio.resume(), new Promise(resolve => setTimeout(resolve, 1500))]);
-      } catch (_) {}
       if (stopped(a)) throw new Error('capture cancelled');
-      const mixed = new MediaStream([video, ...dest.stream.getAudioTracks()]);
-      a.mixed = mixed;
-      a.preview.srcObject = mixed;
+      if (a.source === 'camera') video.addEventListener('ended', () => endAttempt(a), { once: true });
+      a.preview.srcObject = a.mixed;
       a.preview.play().catch(() => {});
       const pc = new RTCPeerConnection();
       a.pc = pc;
@@ -92,7 +121,7 @@
       if (!h264.length) throw new Error('H.264 publishing is unavailable');
       const videoSender = pc.addTransceiver(video, { direction: 'sendonly' });
       videoSender.setCodecPreferences(h264);
-      pc.addTransceiver(dest.stream.getAudioTracks()[0], { direction: 'sendonly' });
+      pc.addTransceiver(sound, { direction: 'sendonly' });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForIce(pc);
@@ -101,7 +130,7 @@
       if (!sdp.includes('H264/90000') || !sdp.includes('m=audio') || !sdp.includes('m=video')) {
         throw new Error('H.264/audio negotiation failed');
       }
-      return JSON.stringify({ sdp, sharedAudio: shared.length > 0, audioRunning: audio.state === 'running' });
+      return JSON.stringify({ sdp, sharedAudio, audioRunning });
     } catch (error) {
       if (publishers.get(key) === a) publishers.delete(key);
       // A permission prompt can resolve after stopPublisher removed the map
@@ -111,14 +140,22 @@
     }
   }
 
-  function newPublisher(onEnded) {
+  function newPublisher(source, onEnded) {
+    if (source !== 'screen' && source !== 'camera') throw new Error('invalid capture source');
     const key = id();
     const preview = document.createElement('video');
     preview.muted = true; preview.autoplay = true; preview.playsInline = true;
     preview.setAttribute('playsinline', '');
     preview.style.cssText = 'width:100%;max-height:300px;background:#111';
-    publishers.set(key, { closed: false, preview, onEnded, display: null, mic: null,
-      mixed: null, dest: null, audio: null, pc: null, displayVideo: null });
+    const a = { key, source, closed: false, preview, onEnded, display: null, camera: null, mic: null,
+      mixed: null, dest: null, audio: null, pc: null, videoTrack: null };
+    a.onVisibility = () => {
+      if (a.source === 'camera' && document.visibilityState === 'hidden') endAttempt(a);
+    };
+    a.onPageHide = () => { if (a.source === 'camera') endAttempt(a); };
+    document.addEventListener?.('visibilitychange', a.onVisibility);
+    window.addEventListener?.('pagehide', a.onPageHide);
+    publishers.set(key, a);
     return key;
   }
 

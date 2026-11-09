@@ -4,6 +4,16 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 05-A 로컬 독립 검증 완료
+
+조정자가 정상 카메라와 합성 숨김 종료를 별도 Chrome 프로세스로 독립 검증했다. H264/Opus·익명 음성/영상·pause·playback409/HLS403·이전grant409·정확한ended·실제자원부재를 확인했다. 제품/검증기 해시는 인계 후 불변이며 전용활성0/기존8090 HTTP200이다. analyze0·전체58 후 추가publisher8·최종JS7·릴리스빌드도 통과했다. 지정 구현자는 편집 중단·대기이며 조정자가 문서와PR게시를 담당한다. 실제iPhone/외부망/Google/unknownPOST/ABR는 미완료다.
+
+
+### 최신: 05-A 구현 동결·독립 검증 인계
+
+지정 대체 Codex가 카메라·마이크 제품 구현과 자체 검사를 마치고 제품/전용스택 편집·기동을 중단했다고 명시했다. 조정자는 실제 대기 상태와 활성 회차0을 확인하고 독립검증 자원을 인수했다. work/mobile-camera, 기준17ec0c8 이후 작업트리이며 아직 커밋/게시 전이다. 자체Flutter59·JS7·분석·빌드와screen/camera/합성숨김통합을 보고했다. 조정자는 변경해시를 저장하고 독립Chrome 카메라검증을 시작했다. 구현자는 추가 편집 없이 대기한다. 실제iPhone/외부망/Google/unknownPOST/ABR는 미완료다.
+
+
 ### 최신: 05-A 모바일 카메라 구현 인계
 
 PC 통합 제품9a91b3b와 문서426c158은 Draft PR7로 게시했다. 새work/mobile-camera에서 지정 대체 Codex가05-A 단일 품질 camera·mic을 단독 구현한다. 티켓 .scratch/wbb-live/issues/05a-mobile-single-rendition.md의 캡처·권한·수명·익명시청 계약을 따른다. 기존 인증 transport/송출 조정자를 재사용하며 source와 캡처를 일치시킨다. 기존8090과 전용스택을 보존하고 변경 전 활성회차를 확인한다. 조정자는 독립 리뷰·검증을 계속한다. 실제iPhone·외부망·Google·unknown POST관문은 미완료다. 새pi/모델/병렬제품구현자를 만들지 않는다.

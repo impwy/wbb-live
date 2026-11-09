@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 
+enum PublishSource { screen, camera }
+
 class CaptureOffer {
   const CaptureOffer({
     required this.sdp,
@@ -31,6 +33,9 @@ abstract class ViewerMediaPlayer {
 }
 
 abstract class MediaPlatform {
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded);
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  );
   ViewerMediaPlayer newViewer(String masterUrl, void Function(String) onEvent);
 }

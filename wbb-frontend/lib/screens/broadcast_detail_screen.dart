@@ -25,7 +25,8 @@ class BroadcastDetailScreen extends StatefulWidget {
   State<BroadcastDetailScreen> createState() => _BroadcastDetailScreenState();
 }
 
-class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
+class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
+    with WidgetsBindingObserver {
   Broadcast? _broadcast;
   LiveSession? _session;
   bool _loading = true;
@@ -49,6 +50,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     _poll = Timer.periodic(
       const Duration(seconds: 5),
@@ -58,6 +60,8 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
 
   @override
   void dispose() {
+    _publisher?.removeListener(_onPublisherChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     _loadEpoch++;
     _playbackEpoch++;
@@ -68,8 +72,53 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     super.dispose();
   }
 
-  LivePublisher get _livePublisher =>
-      _publisher ??= widget.publisher ?? context.read<LivePublisher>();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      if (_publisher?.broadcastId == widget.broadcastId &&
+          _publisher?.source == PublishSource.camera) {
+        _invalidatePendingCameraAction();
+        unawaited(_publisher!.stop());
+      }
+    } else if (state == AppLifecycleState.resumed && mounted) {
+      unawaited(_load(silent: true, force: true));
+    }
+  }
+
+  void _invalidatePendingCameraAction() {
+    if (!_acting) return;
+    ++_actionEpoch;
+    if (mounted) setState(() => _acting = false);
+  }
+
+  void _onPublisherChanged() {
+    final publisher = _publisher;
+    if (publisher?.broadcastId != widget.broadcastId ||
+        publisher?.source != PublishSource.camera) {
+      return;
+    }
+    // JS can report visibility/pagehide before Flutter receives a lifecycle
+    // event. A pending permission Future must not keep the controls locked.
+    if (publisher!.phase == PublishPhase.stopping ||
+        publisher.phase == PublishPhase.idle ||
+        publisher.phase == PublishPhase.error) {
+      _invalidatePendingCameraAction();
+    }
+  }
+
+  void _bindPublisher(LivePublisher publisher) {
+    if (identical(_publisher, publisher)) return;
+    _publisher?.removeListener(_onPublisherChanged);
+    _publisher = publisher;
+    publisher.addListener(_onPublisherChanged);
+  }
+
+  LivePublisher get _livePublisher {
+    final publisher = widget.publisher ?? context.read<LivePublisher>();
+    _bindPublisher(publisher);
+    return publisher;
+  }
 
   void _clearPlayer() {
     _player?.dispose();
@@ -210,7 +259,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     }
   }
 
-  Future<void> _prepare() async {
+  Future<void> _prepare(PublishSource source) async {
     if (_acting) return;
     final epoch = ++_actionEpoch;
     setState(() {
@@ -218,8 +267,8 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
       _actionError = null;
     });
     try {
-      // LivePublisher invokes getDisplayMedia before its first await/API call.
-      await _livePublisher.begin(widget.broadcastId);
+      // The selected device request starts before the first API call or await.
+      await _livePublisher.begin(widget.broadcastId, source: source);
       if (!mounted || epoch != _actionEpoch) return;
       await _load(silent: true, force: true);
     } on ApiException catch (e) {
@@ -286,7 +335,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     final publisher = owner
         ? (widget.publisher ?? context.watch<LivePublisher>())
         : null;
-    if (owner) _publisher ??= publisher;
+    if (owner) _bindPublisher(publisher!);
     return Scaffold(
       appBar: AppBar(
         title: Text(b?.title ?? '방송'),
@@ -343,8 +392,18 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
                 if (owner && (state == 'ready' || state == 'ended')) ...[
                   FilledButton(
                     key: const Key('session-prepare'),
-                    onPressed: _acting || publisher!.busy ? null : _prepare,
+                    onPressed: _acting || publisher!.busy
+                        ? null
+                        : () => _prepare(PublishSource.screen),
                     child: const Text('화면 공유 시작'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    key: const Key('session-prepare-camera'),
+                    onPressed: _acting || publisher!.busy
+                        ? null
+                        : () => _prepare(PublishSource.camera),
+                    child: const Text('카메라·마이크 시작'),
                   ),
                 ],
                 if (owner &&
@@ -360,7 +419,8 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
                     key: const Key('publish-phase'),
                   ),
                   if (publisher.message != null) Text(publisher.message!),
-                  if (!publisher.sharedAudio)
+                  if (publisher.source == PublishSource.screen &&
+                      !publisher.sharedAudio)
                     const Text('공유 소리가 없습니다. 소리를 포함한 탭을 다시 선택해 주세요.'),
                   if (!publisher.audioRunning && publisher.busy)
                     OutlinedButton(

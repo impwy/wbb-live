@@ -4,8 +4,10 @@ MediaPlatform createMediaPlatform() => _UnsupportedMedia();
 
 class _UnsupportedMedia implements MediaPlatform {
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
-      throw UnsupportedError('Browser capture requires Flutter Web');
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => throw UnsupportedError('Browser capture requires Flutter Web');
 
   @override
   ViewerMediaPlayer newViewer(

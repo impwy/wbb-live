@@ -2,7 +2,7 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 04-A 로컬 회차 준비·취소와 영속 상태는 독립 검증·CI를 통과했습니다. 04-B1 인증 미디어 서버는 로컬 송출·익명 시청·종료·재시작을 검증했습니다. 04-B2 Flutter PC 송출·익명 시청은 로컬 독립 검증을 통과했습니다. 모바일 제품 통합과 unknown POST 자동 회수는 미완료입니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
+- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 04-A 로컬 회차 준비·취소와 영속 상태는 독립 검증·CI를 통과했습니다. 04-B1 인증 미디어 서버는 로컬 송출·익명 시청·종료·재시작을 검증했습니다. 04-B2 Flutter PC 송출·익명 시청은 로컬 독립 검증을 통과했습니다. 05-A 카메라·마이크 제품 통합도 로컬 독립 검증을 통과했습니다. 실제 모바일 기기 인수와 unknown POST 자동 회수는 미완료입니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
 - **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
 - 설계 계약: `docs/design.md` (Codex 관리)
@@ -73,7 +73,7 @@ WBB_STATIC_DIR=../wbb-frontend/build/web make run-backend
 
 `http://localhost:8080`에서 가입/로그인 화면의 Google 버튼으로 시작한다. API와 Flutter를 같은 출처에서 제공해야 `/auth/google/complete`의 직접 진입·새로고침이 연결된다. 분리된 개발 서버3000만 실행한 상태는 이 확인 환경이 아니다. 정상 로그인 후 내 방송 등록·새로고침·로그아웃, 취소 후 재시도, 같은 이메일 계정 충돌 안내를 확인한다. 버튼은 서버의 `/api/v1/auth/providers`가 Google 활성화를 알릴 때 표시된다. 모의 provider 검사 성공을 실제 Google 로그인 성공으로 취급하지 않는다.
 
-## 로컬 PC 송출·익명 시청
+## 로컬 화면·카메라 송출과 익명 시청
 
 인증·CRUD용 빠른 시작과 미디어 전용 환경은 구분됩니다. 송출·시청은 [Flutter 전용 실행 안내](experiments/local-secure-media/README.md#flutter-제품-화면)를 따라 빌드와 미디어 구성을 실행합니다. 가입·로그인→내 방송 등록→상세의 **화면 공유 시작**으로 화면·공유 소리·마이크를 송출합니다. 비로그인 브라우저에서 같은 방송의 준비가 끝나면 **재생/소리 켜기**로 시청하고, 소유자의 **방송 중지** 후 종료 상태를 확인합니다.04-B2 로컬 자동 검증은 통과했으며 실제 기기·외부망 인수는 미완료입니다.
 
@@ -134,3 +134,5 @@ CI(GitHub Actions, `.github/workflows/ci.yml`)도 동일하게 backend(`go vet/t
 - 프런트엔드: Flutter, [http](https://pub.dev/packages/http), [provider](https://pub.dev/packages/provider)
 - HLS 재생: [hls.js](https://github.com/video-dev/hls.js), 로컬 번들 `wbb-frontend/web/vendor/hls.min.js`와 라이선스·포함 구성요소 고지 `wbb-frontend/web/vendor/hls.js.LICENSE.txt`. 기존 미디어 실험에서 검증한 동일 번들을 사용하며 런타임 CDN에서 가져오지 않는다.
 - 한글 폰트: [Noto Sans KR](https://github.com/google/fonts/tree/main/ofl/notosanskr) (SIL OFL 1.1, 라이선스 전문 `wbb-frontend/assets/fonts/OFL.txt`) — 폰트를 번들해 런타임 CDN 요청이 없다. 번들 폰트에 없는 글리프(예: 일부 이모지)는 로컬 폴백 경로(`/assets/fonts/fallback/`)로만 해석되며 미지원 글리프로 표시될 수 있다.
+
+카메라 송출은 상세의 **카메라·마이크 시작**을 누르고 두 권한을 허용합니다. 지원 PC에서도 같은 버튼을 사용합니다. 카메라 송출 중 탭을 숨기거나 페이지를 떠나면 종료하며, 복귀해도 자동으로 다시 송출하지 않습니다. 실제 iPhone 지원 인수는 아직 완료하지 않았습니다. [카메라 로컬 검증과 제한](docs/verification/05a-mobile-single-rendition.md)을 참고하세요.

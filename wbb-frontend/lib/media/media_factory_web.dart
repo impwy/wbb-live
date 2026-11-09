@@ -8,7 +8,7 @@ import 'package:web/web.dart' as web;
 import 'media_platform.dart';
 
 @JS('WbbMedia.newPublisher')
-external JSString _newPublisher(JSFunction onEnded);
+external JSString _newPublisher(JSString source, JSFunction onEnded);
 @JS('WbbMedia.publisherVideo')
 external web.HTMLVideoElement _publisherVideo(JSString id);
 @JS('WbbMedia.captureOffer')
@@ -34,8 +34,10 @@ MediaPlatform createMediaPlatform() => _BrowserMedia();
 
 class _BrowserMedia implements MediaPlatform {
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
-      _BrowserPublisher(onDisplayEnded);
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => _BrowserPublisher(source, onCaptureEnded);
 
   @override
   ViewerMediaPlayer newViewer(
@@ -45,11 +47,11 @@ class _BrowserMedia implements MediaPlatform {
 }
 
 class _BrowserPublisher implements PublisherMediaAttempt {
-  _BrowserPublisher(void Function() onDisplayEnded) {
+  _BrowserPublisher(PublishSource source, void Function() onCaptureEnded) {
     _callback = (() {
-      onDisplayEnded();
+      onCaptureEnded();
     }).toJS;
-    _id = _newPublisher(_callback);
+    _id = _newPublisher(source.name.toJS, _callback);
     _viewType = 'wbb-preview-${_id.toDart}';
     ui_web.platformViewRegistry.registerViewFactory(
       _viewType,

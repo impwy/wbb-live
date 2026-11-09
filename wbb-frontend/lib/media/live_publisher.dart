@@ -18,8 +18,9 @@ enum PublishPhase {
 }
 
 class _Attempt {
-  _Attempt(this.broadcastId, this.media, this.epoch);
+  _Attempt(this.broadcastId, this.source, this.media, this.epoch);
   final String broadcastId;
+  final PublishSource source;
   final PublisherMediaAttempt media;
   final int epoch;
   String? sessionId;
@@ -36,6 +37,7 @@ class LivePublisher extends ChangeNotifier {
 
   _Attempt? _active;
   String? _lastBroadcastId;
+  PublishSource? _lastSource;
   Future<void>? _cleanup;
   int _attemptEpoch = 0;
   bool _disposed = false;
@@ -46,6 +48,7 @@ class LivePublisher extends ChangeNotifier {
 
   bool get busy => _active != null || _cleanup != null;
   String? get broadcastId => _active?.broadcastId ?? _lastBroadcastId;
+  PublishSource? get source => _active?.source ?? _lastSource;
   String? get sessionId => _active?.sessionId;
   Widget? get preview => _active?.media.preview;
 
@@ -61,17 +64,22 @@ class LivePublisher extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> begin(String broadcastId) {
+  Future<void> begin(
+    String broadcastId, {
+    PublishSource source = PublishSource.screen,
+  }) {
     if (busy) return Future.value();
     final attempt = _Attempt(
       broadcastId,
-      _media.newPublisher(() {
+      source,
+      _media.newPublisher(source, () {
         unawaited(stop());
       }),
       ++_attemptEpoch,
     );
     _active = attempt;
     _lastBroadcastId = broadcastId;
+    _lastSource = source;
     _set(PublishPhase.capturing);
     // This call enters getDisplayMedia before any API call or await.
     final capture = attempt.media.captureAndOffer();
@@ -89,11 +97,13 @@ class LivePublisher extends ChangeNotifier {
       audioRunning = offer.audioRunning;
       _set(
         PublishPhase.preparing,
-        offer.sharedAudio ? null : '공유 소리가 없습니다. 소리를 포함한 탭을 선택해 주세요.',
+        attempt.source == PublishSource.screen && !offer.sharedAudio
+            ? '공유 소리가 없습니다. 소리를 포함한 탭을 선택해 주세요.'
+            : null,
       );
       final prepared = await _api.prepareSession(
         attempt.broadcastId,
-        source: 'screen',
+        source: attempt.source.name,
         idempotencyKey: createSessionStartKey(Random.secure()),
       );
       attempt.sessionId = prepared.session.id;
@@ -119,7 +129,11 @@ class LivePublisher extends ChangeNotifier {
       );
     } catch (e) {
       if (_active != attempt) return;
-      final label = e is ApiException ? e.message : '화면·마이크 또는 송출 연결에 실패했습니다.';
+      final label = e is ApiException
+          ? e.message
+          : attempt.source == PublishSource.camera
+          ? '카메라·마이크 권한 또는 송출 연결에 실패했습니다.'
+          : '화면·마이크 또는 송출 연결에 실패했습니다.';
       await stop();
       if (attempt.epoch == _attemptEpoch) _set(PublishPhase.error, label);
     }

@@ -36,8 +36,10 @@ class SessionUiApiClient extends ApiClient {
 
 class SessionUiMedia implements MediaPlatform {
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
-      SessionUiAttempt();
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => SessionUiAttempt();
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
       throw UnimplementedError();

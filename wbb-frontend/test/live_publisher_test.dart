@@ -36,8 +36,16 @@ class FakeAttempt implements PublisherMediaAttempt {
 class FakePlatform implements MediaPlatform {
   FakePlatform(this.attempt);
   final FakeAttempt attempt;
+  final sources = <PublishSource>[];
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) => attempt;
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) {
+    sources.add(source);
+    return attempt;
+  }
+
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
       throw UnimplementedError();
@@ -47,14 +55,153 @@ class QueuePlatform implements MediaPlatform {
   QueuePlatform(this.attempts);
   final List<FakeAttempt> attempts;
   @override
-  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
-      attempts.removeAt(0);
+  PublisherMediaAttempt newPublisher(
+    PublishSource source,
+    void Function() onCaptureEnded,
+  ) => attempts.removeAt(0);
   @override
   ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
       throw UnimplementedError();
 }
 
 void main() {
+  test(
+    'camera WHIP rejection stops its local tracks and prepared session',
+    () async {
+      final capture = Completer<CaptureOffer>()
+        ..complete(
+          const CaptureOffer(sdp: 'v=0', sharedAudio: true, audioRunning: true),
+        );
+      final attempt = FakeAttempt(capture);
+      var whipCalls = 0, stopCalls = 0;
+      final api = ApiClient(
+        baseUrl: 'https://live.test/api/v1',
+        client: MockClient((request) async {
+          final path = request.url.path;
+          if (path.endsWith('/broadcasts/b1/sessions') &&
+              request.method == 'POST') {
+            return http.Response(
+              jsonEncode({
+                'session': {
+                  'id': 's1',
+                  'broadcastId': 'b1',
+                  'state': 'starting',
+                  'version': 1,
+                  'startedAt': '2026-11-09T01:00:00Z',
+                },
+                'publishGrant': {
+                  'token': 'private',
+                  'whipUrl': '/api/v1/live-sessions/s1/whip',
+                  'expiresAt': '2026-11-09T01:00:30Z',
+                },
+              }),
+              202,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (path.endsWith('/live-sessions/s1/whip') &&
+              request.method == 'POST') {
+            whipCalls++;
+            return http.Response('', 503);
+          }
+          if (path.endsWith('/broadcasts/b1/sessions/s1/stop') &&
+              request.method == 'POST') {
+            stopCalls++;
+            return http.Response(
+              jsonEncode({
+                'session': {
+                  'id': 's1',
+                  'broadcastId': 'b1',
+                  'state': 'stopping',
+                  'version': 2,
+                  'startedAt': '2026-11-09T01:00:00Z',
+                },
+              }),
+              202,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          fail('unexpected ${request.method} $path');
+        }),
+      );
+      final publisher = LivePublisher(api, FakePlatform(attempt));
+      await publisher.begin('b1', source: PublishSource.camera);
+      expect(whipCalls, 1);
+      expect(stopCalls, 1);
+      expect(attempt.stopCalls, greaterThan(0));
+      expect(publisher.phase, PublishPhase.error);
+      expect(publisher.message, contains('송출 연결'));
+    },
+  );
+
+  test('camera selection is passed to capture and prepare without creating two sessions', () async {
+    final capture = Completer<CaptureOffer>()
+      ..complete(
+        const CaptureOffer(sdp: 'v=0', sharedAudio: false, audioRunning: true),
+      );
+    final attempt = FakeAttempt(capture);
+    final media = FakePlatform(attempt);
+    final prepared = Completer<http.Response>();
+    final entered = Completer<void>();
+    var prepareCalls = 0;
+    String? source;
+    final api = ApiClient(
+      baseUrl: 'https://live.test/api/v1',
+      client: MockClient((request) async {
+        final path = request.url.path;
+        if (path.endsWith('/broadcasts/b1/sessions') &&
+            request.method == 'POST') {
+          prepareCalls++;
+          source =
+              (jsonDecode(request.body) as Map<String, dynamic>)['source']
+                  as String;
+          entered.complete();
+          return prepared.future;
+        }
+        if (path.endsWith('/broadcasts/b1/sessions/s1/stop')) {
+          return http.Response(
+            jsonEncode({
+              'session': {
+                'id': 's1',
+                'broadcastId': 'b1',
+                'state': 'stopping',
+                'version': 2,
+                'startedAt': '2026-11-09T01:00:00Z',
+              },
+            }),
+            202,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        fail('unexpected ${request.method} $path');
+      }),
+    );
+    final publisher = LivePublisher(api, media);
+    final work = publisher.begin('b1', source: PublishSource.camera);
+    await entered.future;
+    expect(media.sources, [PublishSource.camera]);
+    expect(source, 'camera');
+    await publisher.stop();
+    prepared.complete(
+      http.Response(
+        jsonEncode({
+          'session': {
+            'id': 's1',
+            'broadcastId': 'b1',
+            'state': 'starting',
+            'version': 1,
+            'startedAt': '2026-11-09T01:00:00Z',
+          },
+          'publishGrant': null,
+        }),
+        202,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    await work;
+    expect(prepareCalls, 1);
+  });
+
   test('logout hook stops active capture before sending logout', () async {
     final capture = Completer<CaptureOffer>();
     final attempt = FakeAttempt(capture);

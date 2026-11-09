@@ -60,3 +60,10 @@ docker compose --env-file experiments/local-secure-media/.env -f experiments/loc
 ```
 
 응답 유실로 resource 주소를 얻지 못한 작업은 STOPPING에 남을 수 있다. 자동 회수는 04-B/07의 미완료 범위다. [검증 결과와 제한](../../docs/verification/04b-local-secure-media.md)을 참고한다.
+
+
+## 카메라·마이크 제품 확인
+
+Flutter 상세에서 **카메라·마이크 시작**을 선택하고 두 권한을 허용한다. PC 카메라도 같은 경로를 사용한다. 익명 시청과 중지는 화면 공유와 동일하다. 카메라 송출은 숨김/pagehide에서 종료하며 복귀 시 상태를 다시 조회하고 자동 재송출하지 않는다. PC 화면 공유는 탭 숨김만으로 종료하지 않는다.
+
+합성 카메라 검사: `node experiments/local-secure-media/verify-flutter.mjs --camera`. 합성 숨김 종료 검사: 같은 명령에 `--camera-hide`를 추가한다. 두 명령은 저장소 루트에서 전용 Flutter 스택을 실행한 상태로 순차 실행한다. 기존 화면 공유 회귀는 옵션 없이 실행한다. 실제 장치 권한을 요청하는 검사가 아니며, 실제 iPhone·외부망 인수를 대신하지 않는다. [독립 결과와 제한](../../docs/verification/05a-mobile-single-rendition.md)을 따른다.

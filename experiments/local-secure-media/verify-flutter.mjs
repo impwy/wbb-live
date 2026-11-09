@@ -3,10 +3,19 @@
 import { chromium } from '../media-single-rendition/node_modules/playwright/index.mjs';
 import tls from 'node:tls';
 import crypto, { X509Certificate } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mediaList, dbRun, ffmpegExists } from './verify-browser.mjs';
 
 const origin = 'https://localhost:19443';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const execFileAsync=promisify(execFile);
+async function dbSessionSource(sid) {
+  if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
+  const {stdout}=await execFileAsync('docker',['exec','wbb-local-secure-media-postgres-1',
+    'psql','-U','wbb','-d','wbb','-At','-c',`SELECT source FROM broadcast_sessions WHERE id='${sid}'`],{timeout:5000});
+  return stdout.trim();
+}
 const finite = async (label, ms, work) => {
   let timer;
   try { return await Promise.race([work(), new Promise((_, reject) => {
@@ -27,18 +36,43 @@ async function pin() {
   });
 }
 
-function syntheticCapture() {
+function syntheticCapture({camera}) {
   const NativeAC = window.AudioContext;
   const NativePC = window.RTCPeerConnection;
   const actualDisplay = navigator.mediaDevices.getDisplayMedia?.bind(navigator.mediaDevices);
   const actualMic = navigator.mediaDevices.getUserMedia?.bind(navigator.mediaDevices);
-  const spy = window.__flutterMediaTest = { displayCalls: 0, micCalls: 0,
-    displayAt: 0, prepareAt: 0, streams: [], sourceContexts: [], productContexts: [], pcs: [], timers: [] };
+  const spy = window.__flutterMediaTest = { displayCalls: 0, micCalls: 0, cameraCalls: 0,
+    displayAt: 0, cameraAt: 0, prepareAt: 0, preparedSource: '',
+    streams: [], sourceContexts: [], productContexts: [], pcs: [], timers: [] };
   const realFetch = window.fetch.bind(window);
+  let oldGrant=null;
+  spy.probeOldGrant=async()=>{
+    if(!oldGrant)return null;
+    const response=await realFetch(oldGrant.whipUrl,{method:'POST',credentials:'include',
+      signal:AbortSignal.timeout(5000),headers:{'Content-Type':'application/sdp',Authorization:`Bearer ${oldGrant.token}`},
+      body:'v=0'});
+    oldGrant=null;
+    return response.status;
+  };
   window.fetch = (...args) => {
     const url = String(args[0]?.url || args[0]);
-    if (url.endsWith('/sessions') && (args[1]?.method || args[0]?.method) === 'POST') spy.prepareAt = performance.now();
-    return realFetch(...args);
+    if (url.endsWith('/sessions') && (args[1]?.method || args[0]?.method) === 'POST') {
+      spy.prepareAt = performance.now();
+      // Inspect only an already-materialized body. A Request/stream must not
+      // be consumed or delay the product fetch; the DB checks source later.
+      try {
+        const body=args[1]?.body;
+        const json=typeof body==='string'?body:
+          ArrayBuffer.isView(body)?new TextDecoder().decode(body):
+          body instanceof ArrayBuffer?new TextDecoder().decode(body):'';
+        if(json)spy.preparedSource=JSON.parse(json).source||'';
+      } catch(_) {}
+    }
+    const response=realFetch(...args);
+    if(url.endsWith('/sessions') && (args[1]?.method || args[0]?.method)==='POST') {
+      response.then(r=>r.clone().json().then(value=>{oldGrant=value.publishGrant||null;}).catch(()=>{})).catch(()=>{});
+    }
+    return response;
   };
   window.AudioContext = class extends NativeAC {
     constructor(...args) { super(...args); spy.productContexts.push(this); }
@@ -55,17 +89,25 @@ function syntheticCapture() {
     ac.resume();
     return dest.stream.getAudioTracks()[0];
   };
-  navigator.mediaDevices.getDisplayMedia = () => {
-    spy.displayCalls++; spy.displayAt = performance.now();
+  const videoTrack=()=>{
     const canvas = document.createElement('canvas'); canvas.width=640;canvas.height=360;
     const ctx=canvas.getContext('2d'); let n=0;
     const paint=()=>{ctx.fillStyle=n++%2?'#1754b5':'#e9a22f';ctx.fillRect(0,0,640,360);};
     paint();spy.timers.push(setInterval(paint,33));
-    const result = new MediaStream([canvas.captureStream(30).getVideoTracks()[0], tone(440)]);
+    return canvas.captureStream(30).getVideoTracks()[0];
+  };
+  navigator.mediaDevices.getDisplayMedia = () => {
+    spy.displayCalls++; spy.displayAt = performance.now();
+    const result = new MediaStream([videoTrack(), tone(440)]);
     spy.streams.push(result);
     return Promise.resolve(result);
   };
-  navigator.mediaDevices.getUserMedia = () => {
+  navigator.mediaDevices.getUserMedia = constraints => {
+    if (constraints.video) {
+      spy.cameraCalls++;spy.cameraAt=performance.now();
+      const result=new MediaStream([videoTrack(),tone(660)]);
+      spy.streams.push(result);return Promise.resolve(result);
+    }
     spy.micCalls++;
     const result = new MediaStream([tone(660)]);spy.streams.push(result);
     return Promise.resolve(result);
@@ -85,6 +127,9 @@ async function enableSemantics(page) {
 }
 
 async function main() {
+  const camera=process.argv.includes('--camera');
+  const hideCamera=process.argv.includes('--camera-hide');
+  if(hideCamera&&!camera)throw new Error('camera-hide requires camera');
   const leaf = await pin();
   const args = [`--ignore-certificate-errors-spki-list=${leaf}`, '--autoplay-policy=no-user-gesture-required'];
   const publisherBrowser = await chromium.launch({channel:'chrome',headless:true,args,timeout:10000});
@@ -95,8 +140,12 @@ async function main() {
   let owner, viewer, bid, sid, passed=false, liveRun;
   try {
     owner = await publisherBrowser.newPage(); viewer = await viewerBrowser.newPage();
+    if(camera) {
+      await owner.setViewportSize({width:390,height:844});
+      await viewer.setViewportSize({width:390,height:844});
+    }
     owner.setDefaultTimeout(10000); viewer.setDefaultTimeout(10000);
-    await owner.addInitScript(syntheticCapture);
+    await owner.addInitScript(syntheticCapture,{camera});
     await finite('owner navigation',15000,()=>owner.goto(origin));
     await enableSemantics(owner);
     await owner.getByRole('button',{name:'로그인',exact:true}).click();
@@ -142,8 +191,22 @@ async function main() {
       return (await r.json()).items.find(b=>b.title===title)?.id;
     }, title);
     if (!bid) throw new Error('created broadcast not found by public list');
-    await owner.getByRole('button',{name:'화면 공유 시작'}).click();
-    await owner.getByText('송출: publishing').waitFor({timeout:25000});
+    await owner.getByRole('button',{name:camera?'카메라·마이크 시작':'화면 공유 시작'}).click();
+    try {
+      await owner.getByText('송출: publishing').waitFor({timeout:camera?10000:25000});
+    } catch(error) {
+      console.error('publish state',await owner.getByText(/송출:|실패|권한/).allTextContents().catch(()=>[]));
+      console.error('capture calls',await owner.evaluate(()=>({display:window.__flutterMediaTest?.displayCalls,
+        mic:window.__flutterMediaTest?.micCalls,camera:window.__flutterMediaTest?.cameraCalls,
+        preparedSource:window.__flutterMediaTest?.preparedSource})).catch(()=>({})));
+      if(camera) console.error('direct camera capture',await owner.evaluate(async()=>{
+        const key=window.WbbMedia.newPublisher('camera',()=>{});
+        try{const value=JSON.parse(await window.WbbMedia.captureOffer(key));return {offerLength:value.sdp.length};}
+        catch(e){return {name:e?.name,message:e?.message};}
+        finally{await window.WbbMedia.stopPublisher(key);}
+      }).catch(e=>({message:e.message})));
+      throw error;
+    }
     sid = await owner.evaluate(async bid => {
       const r=await fetch(`/api/v1/broadcasts/${bid}/sessions/current`,{signal:AbortSignal.timeout(5000)});
       return (await r.json()).session?.id;
@@ -172,16 +235,22 @@ async function main() {
       videoNegotiation.audio.packetsSent<1) throw new Error(`outbound media missing ${JSON.stringify(videoNegotiation)}`);
     const capture = await owner.evaluate(() => {
       const s=window.__flutterMediaTest;
-      return {display:s.displayCalls,mic:s.micCalls,displayBeforePrepare:s.displayAt>0&&s.prepareAt>s.displayAt,
+      return {display:s.displayCalls,mic:s.micCalls,camera:s.cameraCalls,
+        captureBeforePrepare:(s.cameraAt||s.displayAt)>0&&s.prepareAt>(s.cameraAt||s.displayAt),
+        preparedSource:s.preparedSource,
         pc:s.pcs.length,ac:s.productContexts.length};
     });
-    if (capture.display!==1 || capture.mic!==1 || !capture.displayBeforePrepare || capture.pc!==1 || capture.ac<1) {
+    if ((camera?(capture.camera!==1||capture.display!==0||capture.mic!==0||capture.ac!==0):
+      (capture.display!==1||capture.mic!==1||capture.camera!==0||capture.ac<1)) ||
+      !capture.captureBeforePrepare || capture.pc!==1) {
       throw new Error(`capture order/resources ${JSON.stringify(capture)}`);
     }
     await owner.getByText('상태: 방송 중').waitFor({timeout:35000});
     liveRun=await dbRun(sid);
     if (liveRun.state!=='running' || !(await ffmpegExists(liveRun.pid))) throw new Error('LIVE FFmpeg missing');
     if (!sid) throw new Error('LIVE session id missing');
+    const storedSource=await dbSessionSource(sid);
+    if(storedSource!==(camera?'camera':'screen'))throw new Error(`stored source ${storedSource}`);
     const livePaths=await mediaList('paths');
     const sourcePath=livePaths.find(x=>x.name===`wbb/${sid}/1/source`);
     const sourceTracks=sourcePath?.tracks||[];
@@ -210,8 +279,9 @@ async function main() {
         if(a>-65&&b>-65&&a>noise+6&&b>noise+6)break;await new Promise(r=>setTimeout(r,400));}
       await audio.close();return {a,b,noise};
     });
-    if (!(tones.a>-65&&tones.b>-65&&tones.a>tones.noise+6&&tones.b>tones.noise+6)) {
-      throw new Error(`two-tone playback missing: ${JSON.stringify(tones)}`);
+    if (camera ? !(tones.b>-65&&tones.b>tones.noise+6&&tones.a<tones.b-10) :
+      !(tones.a>-65&&tones.b>-65&&tones.a>tones.noise+6&&tones.b>tones.noise+6)) {
+      throw new Error(`expected audio missing: ${JSON.stringify(tones)}`);
     }
     await viewer.locator('video').last().evaluate(v=>v.pause());
     await viewer.getByRole('button',{name:'라이브로 이동'}).click();
@@ -230,7 +300,19 @@ async function main() {
       if(!r.ok)throw new Error(`playback access ${r.status}`);
       return (await r.json()).masterUrl;
     },bid);
-    await owner.getByRole('button',{name:'방송 중지'}).click();
+    let hiddenRelease=null;
+    if(hideCamera) {
+      hiddenRelease=await owner.evaluate(()=>{
+        Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+        document.dispatchEvent(new Event('visibilitychange'));
+        const s=window.__flutterMediaTest;
+        return {tracks:s.streams.flatMap(x=>x.getTracks()).every(t=>t.readyState==='ended'),
+          pc:s.pcs.every(x=>x.connectionState==='closed')};
+      });
+      if(!hiddenRelease.tracks||!hiddenRelease.pc)throw new Error(`hidden did not release local media ${JSON.stringify(hiddenRelease)}`);
+    } else {
+      await owner.getByRole('button',{name:'방송 중지'}).click();
+    }
     await finite('stop accepted',8000,async()=>{
       while(true) {
         const state=await owner.evaluate(async bid=>{
@@ -249,6 +331,8 @@ async function main() {
       return {access:access.status,hls:hls.status};
     },{bid,masterUrl});
     if(afterStop.access!==409 || afterStop.hls!==403) throw new Error(`stop gate ${JSON.stringify(afterStop)}`);
+    const oldGrantStatus=await owner.evaluate(()=>window.__flutterMediaTest.probeOldGrant());
+    if(oldGrantStatus!==401 && oldGrantStatus!==409)throw new Error(`old publish grant accepted or unobserved: ${oldGrantStatus}`);
     await finite('ended state',30000,async()=>{
       while (true) {
         const state=await owner.evaluate(async bid=>{
@@ -259,7 +343,17 @@ async function main() {
         await sleep(500);
       }
     });
+    if(hideCamera) {
+      await owner.evaluate(()=>{
+        delete document.visibilityState;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    }
     await owner.getByText('상태: 종료',{exact:true}).waitFor({timeout:10000});
+    if(hideCamera) {
+      const noRestart=await owner.evaluate(()=>window.__flutterMediaTest.cameraCalls);
+      if(noRestart!==1)throw new Error(`camera restarted after visibility return: ${noRestart}`);
+    }
     const endedRun=await dbRun(sid);
     const prefix=`wbb/${sid}/1/`;
     const [paths,ingress,rtsp]=await Promise.all([mediaList('paths'),mediaList('webrtcsessions'),mediaList('rtspsessions')]);
@@ -278,10 +372,10 @@ async function main() {
     await viewer.getByRole('button',{name:'상태 새로고침'}).click();
     await viewer.getByRole('button',{name:'재생',exact:true}).waitFor({state:'visible'});
     if (await viewer.getByRole('button',{name:'재생',exact:true}).isEnabled()) throw new Error('ended playback remains enabled');
-    console.log(JSON.stringify({signupLogin:true,uiPublish:true,displayBeforePrepare:true,
+    console.log(JSON.stringify({source:storedSource,signupLogin:true,uiPublish:true,captureBeforePrepare:true,
       outboundVideo:videoNegotiation.video,outboundAudio:videoNegotiation.audio,sourceTracks,
       anonymousFrames:frames,audioTonesDb:tones,pausedPreserved:afterPaused.paused,
-      afterStop,ended:true,released,sessionId:sid}));
+      afterStop,oldGrantStatus,ended:true,released,hiddenRelease,autoRestart:hideCamera?false:null,sessionId:sid}));
     passed=true;
   } finally {
     if (!sid && bid && owner) sid=await finite('failure session lookup',5000,()=>owner.evaluate(async bid=>{

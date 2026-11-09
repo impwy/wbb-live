@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 04-B2 Flutter 통합 시작
+
+서버 체크포인트107cdd8은 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)(base work/local-session-control)으로 게시했다. 조정자 SIGKILL·자동 재시작·새 시청자·blocking HLS 종료 독립 검증을 완료했고 전용 활성 회차0과 기존8090 HTTP200을 확인했다. 새 브랜치work/flutter-live에서 지정 대체 Codex가04-B2 Flutter PC 송출·익명 시청을 단독 구현한다. 티켓의04-B2 인터페이스·자원 소유·클릭 활성화·인증 만료·늦은 응답·재생 상태 계약을 따른다. 조정자는 리뷰와 독립 검증을 계속한다. unknown POST 자동회수와 실제기기/외부망 관문은 그대로 미완료다. 새pi/모델/구현자 추가는 없다.
+
 ### 최신: 04-B1 독립 검증 완료, 04-B2 준비
 
 work/local-secure-media의 서버 인터페이스와 정상·권한 차단·종료·장애 경계를 검증했다. 지정 대체 Codex는 제품과 전용 스택을 동결하고 대기 중이다. 조정자의 전체 Go race/vet, Linux9개, 추가 응답 유실 fixture, 실제 worker SIGKILL·자동 재시작·새 시청자33프레임·최종자원부재, 실제 pending LL-HLS 요청 종료(약2.1초404)가 통과했다. 두 축 정적 잔여0건이다. `.scratch/wbb-live/issues/04b-local-secure-media.md`의04-B2 계약에 따라 Flutter PC 송출·익명 시청을 다음 구현으로 인계한다. 주소 없는 unknown POST 자동 회수는04-B/07에서 미완료로 유지하며 전체04-B 완료를 의미하지 않는다. 최신 리뷰·검증 문서는 docs/reviews/04b-local-secure-media.md와 docs/verification/04b-local-secure-media.md다. 기존8090/CPU서비스는 유지한다.

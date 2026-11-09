@@ -30,6 +30,35 @@ class LoginResult {
   final User user;
 }
 
+/// A start response for the publisher only. Never place this in public
+/// [LiveSession] state or render the grant in a widget.
+class PreparedSession {
+  PreparedSession(this.session, this.publishGrant);
+  final LiveSession session;
+  final PublishGrant? publishGrant;
+}
+
+class PublishGrant {
+  PublishGrant(this.token, this.whipUrl, this.expiresAt);
+  final String token;
+  final String whipUrl;
+  final DateTime expiresAt;
+}
+
+class WhipResource {
+  WhipResource(this.sessionId, this.location, this.etag, this.answerSdp);
+  final String sessionId;
+  final String location;
+  final String? etag;
+  final String answerSdp;
+}
+
+class PlaybackAccess {
+  PlaybackAccess(this.sessionId, this.masterUrl);
+  final String sessionId;
+  final String masterUrl;
+}
+
 /// Thin HTTP client for the WBB public API.
 ///
 /// - The access JWT lives in memory only (never localStorage).
@@ -37,9 +66,14 @@ class LoginResult {
 /// - A 401 on an authenticated call triggers one single-flight refresh and a
 ///   single retry, serializing concurrent calls within this ApiClient instance.
 class ApiClient {
-  ApiClient({http.Client? client, String baseUrl = kApiBaseUrl, this.onSessionExpired})
-      : _http = client ?? createPlatformClient(),
-        _baseUrl = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+  ApiClient({
+    http.Client? client,
+    String baseUrl = kApiBaseUrl,
+    this.onSessionExpired,
+  }) : _http = client ?? createPlatformClient(),
+       _baseUrl = baseUrl.endsWith('/')
+           ? baseUrl.substring(0, baseUrl.length - 1)
+           : baseUrl;
 
   final http.Client _http;
   final String _baseUrl;
@@ -54,7 +88,17 @@ class ApiClient {
   String? _accessToken;
   Future<LoginResult>? _refreshInFlight;
 
-  set accessToken(String? token) => _accessToken = token;
+  int _authEpoch = 0;
+  bool _signingOut = false;
+  bool _loginInFlight = false;
+  Future<void>? _logoutInFlight;
+
+  bool get hasAccessToken => _accessToken != null;
+
+  set accessToken(String? token) {
+    _authEpoch++;
+    _accessToken = token;
+  }
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -62,8 +106,10 @@ class ApiClient {
     Object? body,
     bool auth = false,
     bool allowRefreshRetry = true,
+    bool guardAuthEpoch = true,
     Map<String, String>? headers,
   }) async {
+    final requestEpoch = _authEpoch;
     final uri = Uri.parse('$_baseUrl$path');
     final request = http.Request(method, uri);
     if (headers != null) request.headers.addAll(headers);
@@ -77,21 +123,48 @@ class ApiClient {
 
     http.StreamedResponse streamed;
     try {
-      streamed = await _http.send(request);
+      streamed = await _http.send(request).timeout(const Duration(seconds: 12));
     } catch (_) {
-      throw ApiException(0, 'network_error', '네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      throw ApiException(
+        0,
+        'network_error',
+        '네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+      );
     }
     http.Response response;
     try {
-      response = await http.Response.fromStream(streamed);
+      response = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 12));
     } catch (_) {
-      throw ApiException(0, 'network_error', '네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      throw ApiException(
+        0,
+        'network_error',
+        '네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+      );
     }
 
-    if (response.statusCode == 401 && auth && allowRefreshRetry && _accessToken != null) {
-      final refreshed = await refresh();
-      _accessToken = refreshed.accessToken;
-      return _request(method, path, body: body, auth: auth, allowRefreshRetry: false, headers: headers);
+    if (auth &&
+        guardAuthEpoch &&
+        (requestEpoch != _authEpoch || _loginInFlight)) {
+      throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+    }
+    if (response.statusCode == 401 &&
+        auth &&
+        allowRefreshRetry &&
+        _accessToken != null &&
+        !_signingOut) {
+      await refresh();
+      if (requestEpoch != _authEpoch) {
+        throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+      }
+      return _request(
+        method,
+        path,
+        body: body,
+        auth: auth,
+        allowRefreshRetry: false,
+        headers: headers,
+      );
     }
 
     if (response.statusCode == 204 || response.body.isEmpty) {
@@ -102,7 +175,8 @@ class ApiClient {
     }
     final Map<String, dynamic> decoded;
     try {
-      decoded = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      decoded =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
     } catch (_) {
       throw ApiException(0, 'invalid_response', '서버 응답을 해석할 수 없습니다.');
     }
@@ -129,22 +203,40 @@ class ApiClient {
     required String password,
     required String displayName,
   }) async {
-    final data = await _request('POST', '/auth/register', body: {
-      'email': email,
-      'password': password,
-      'displayName': displayName,
-    });
+    final data = await _request(
+      'POST',
+      '/auth/register',
+      body: {'email': email, 'password': password, 'displayName': displayName},
+    );
     return User.fromJson(data['user'] as Map<String, dynamic>);
   }
 
   Future<LoginResult> login(String email, String password) async {
-    final data = await _request('POST', '/auth/login', body: {
-      'email': email,
-      'password': password,
-    });
-    final result = _parseLogin(data);
-    _accessToken = result.accessToken;
-    return result;
+    final epoch = ++_authEpoch;
+    _loginInFlight = true;
+    try {
+      final leaving = _logoutInFlight;
+      if (leaving != null) {
+        try {
+          await leaving;
+        } catch (_) {
+          /* login may proceed after failed logout */
+        }
+      }
+      final data = await _request(
+        'POST',
+        '/auth/login',
+        body: {'email': email, 'password': password},
+      );
+      final result = _parseLogin(data);
+      if (epoch != _authEpoch) {
+        throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+      }
+      _accessToken = result.accessToken;
+      return result;
+    } finally {
+      if (epoch == _authEpoch) _loginInFlight = false;
+    }
   }
 
   /// Refresh via the HttpOnly cookie. Single-flight within this client
@@ -152,22 +244,34 @@ class ApiClient {
   /// server's family revocation, which forces a re-login instead of
   /// silently keeping stale tokens alive.
   Future<LoginResult> refresh() {
+    if (_signingOut || _loginInFlight) {
+      return Future.error(
+        ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.'),
+      );
+    }
     final inFlight = _refreshInFlight;
     if (inFlight != null) return inFlight;
-    final future = _doRefresh().whenComplete(() => _refreshInFlight = null);
+    final epoch = _authEpoch;
+    final future = _doRefresh(epoch)
+        .whenComplete(() => _refreshInFlight = null);
     _refreshInFlight = future;
     return future;
   }
 
-  Future<LoginResult> _doRefresh() async {
+  Future<LoginResult> _doRefresh(int epoch) async {
     try {
       final data = await _request('POST', '/auth/refresh');
       final result = _parseLogin(data);
+      if (epoch != _authEpoch || _signingOut || _loginInFlight) {
+        throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+      }
       _accessToken = result.accessToken;
       return result;
     } on ApiException catch (e) {
-      if (e.isUnauthorized) {
+      if (e.isUnauthorized && epoch == _authEpoch && !_signingOut) {
         // Session definitively dead: let the app switch to signed-out.
+        _authEpoch++;
+        _accessToken = null;
         onSessionExpired?.call();
       }
       rethrow;
@@ -175,24 +279,44 @@ class ApiClient {
   }
 
   LoginResult _parseLogin(Map<String, dynamic> data) => LoginResult(
-        accessToken: data['accessToken'] as String,
-        user: User.fromJson(data['user'] as Map<String, dynamic>),
-      );
+    accessToken: data['accessToken'] as String,
+    user: User.fromJson(data['user'] as Map<String, dynamic>),
+  );
 
   /// Logout. 401 means the session is already dead server-side, so the local
   /// token is dropped and the call counts as success. Any other failure
   /// (403, 5xx, network) is surfaced to the caller and the local token is
   /// kept so the user can retry.
-  Future<void> logout() async {
+  Future<void> logout() {
+    final existing = _logoutInFlight;
+    if (existing != null) return existing;
+    final work = _doLogout();
+    _logoutInFlight = work;
+    return work;
+  }
+
+  Future<void> _doLogout() async {
+    final epoch = ++_authEpoch;
+    _signingOut = true;
+    _loginInFlight = false;
     try {
-      await _request('POST', '/auth/logout', auth: _accessToken != null);
-      _accessToken = null;
+      await _request(
+        'POST',
+        '/auth/logout',
+        auth: _accessToken != null,
+        allowRefreshRetry: false,
+        guardAuthEpoch: false,
+      );
+      if (epoch == _authEpoch) _accessToken = null;
     } on ApiException catch (e) {
       if (e.isUnauthorized) {
-        _accessToken = null;
+        if (epoch == _authEpoch) _accessToken = null;
         return;
       }
       rethrow;
+    } finally {
+      _signingOut = false;
+      _logoutInFlight = null;
     }
   }
 
@@ -206,7 +330,10 @@ class ApiClient {
   Future<BroadcastPage> listBroadcasts({String? cursor, int limit = 20}) async {
     final query = <String, String>{'limit': '$limit'};
     if (cursor != null && cursor.isNotEmpty) query['cursor'] = cursor;
-    final data = await _request('GET', '/broadcasts?${Uri(queryParameters: query).query}');
+    final data = await _request(
+      'GET',
+      '/broadcasts?${Uri(queryParameters: query).query}',
+    );
     return BroadcastPage(
       items: (data['items'] as List<dynamic>)
           .map((e) => Broadcast.fromJson(e as Map<String, dynamic>))
@@ -220,9 +347,16 @@ class ApiClient {
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
   }
 
-  Future<Broadcast> createBroadcast({required String title, String description = ''}) async {
-    final data = await _request('POST', '/broadcasts',
-        body: {'title': title, 'description': description}, auth: true);
+  Future<Broadcast> createBroadcast({
+    required String title,
+    String description = '',
+  }) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts',
+      body: {'title': title, 'description': description},
+      auth: true,
+    );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
   }
 
@@ -232,11 +366,12 @@ class ApiClient {
     String? title,
     String? description,
   }) async {
-    final data = await _request('PATCH', '/broadcasts/$id', body: {
-      'version': version,
-      'title': ?title,
-      'description': ?description,
-    }, auth: true);
+    final data = await _request(
+      'PATCH',
+      '/broadcasts/$id',
+      body: {'version': version, 'title': ?title, 'description': ?description},
+      auth: true,
+    );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
   }
 
@@ -245,20 +380,188 @@ class ApiClient {
   }
 
   /// Prepares only a session; no capture or LIVE state is implied.
-  Future<LiveSession> prepareSession(String broadcastId, {required String source, required String idempotencyKey}) async {
-    final data = await _request('POST', '/broadcasts/$broadcastId/sessions',
-        body: {'source': source}, auth: true, headers: {'Idempotency-Key': idempotencyKey});
-    return LiveSession.fromJson(data['session'] as Map<String, dynamic>);
+  Future<PreparedSession> prepareSession(
+    String broadcastId, {
+    required String source,
+    required String idempotencyKey,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/sessions',
+      body: {'source': source},
+      auth: true,
+      headers: {'Idempotency-Key': idempotencyKey},
+    );
+    final rawGrant = data['publishGrant'];
+    PublishGrant? grant;
+    if (rawGrant is Map<String, dynamic>) {
+      grant = PublishGrant(
+        rawGrant['token'] as String,
+        rawGrant['whipUrl'] as String,
+        DateTime.parse(rawGrant['expiresAt'] as String),
+      );
+    }
+    return PreparedSession(
+      LiveSession.fromJson(data['session'] as Map<String, dynamic>),
+      grant,
+    );
+  }
+
+  Uri _mediaUri(String raw, String expectedPath) {
+    final base = Uri.parse(_baseUrl);
+    final origin = base.hasScheme ? base.origin : Uri.base.origin;
+    final uri = Uri.parse(raw);
+    final resolved = uri.hasScheme ? uri : Uri.parse(origin).resolveUri(uri);
+    if (resolved.origin != origin ||
+        resolved.path != expectedPath ||
+        resolved.hasQuery ||
+        resolved.hasFragment ||
+        resolved.userInfo.isNotEmpty) {
+      throw ApiException(0, 'unsafe_media_url', '잘못된 미디어 주소입니다.');
+    }
+    return resolved;
+  }
+
+  Future<http.Response> _mediaRequest(
+    String method,
+    Uri uri, {
+    String? bearer,
+    String? body,
+    String? contentType,
+    String? etag,
+    bool auth = false,
+    bool retry = true,
+  }) async {
+    final epoch = _authEpoch;
+    final request = http.Request(method, uri);
+    final credential = auth ? _accessToken : bearer;
+    if (credential != null) {
+      request.headers['Authorization'] = 'Bearer $credential';
+    }
+    if (contentType != null) request.headers['Content-Type'] = contentType;
+    if (etag != null) request.headers['If-Match'] = etag;
+    if (body != null) request.body = body;
+    try {
+      final streamed = await _http
+          .send(request)
+          .timeout(const Duration(seconds: 14));
+      final response = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 14));
+      if (auth && (epoch != _authEpoch || _loginInFlight || _signingOut)) {
+        throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+      }
+      if (response.statusCode == 401 && auth && retry && !_signingOut) {
+        await refresh();
+        if (epoch != _authEpoch) {
+          throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+        }
+        return await _mediaRequest(
+          method,
+          uri,
+          bearer: bearer,
+          body: body,
+          contentType: contentType,
+          etag: etag,
+          auth: true,
+          retry: false,
+        );
+      }
+      return response;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException(0, 'media_network_error', '미디어 연결을 확인할 수 없습니다.');
+    }
+  }
+
+  /// A POST with an unknown outcome is never retried automatically.
+  Future<WhipResource> postWhip(
+    PreparedSession prepared,
+    String offerSdp,
+  ) async {
+    final grant = prepared.publishGrant;
+    if (grant == null || grant.token.isEmpty) {
+      throw ApiException(409, 'grant_unavailable', '송출 자격이 만료되었습니다.');
+    }
+    final sid = prepared.session.id;
+    final uri = _mediaUri(grant.whipUrl, '/api/v1/live-sessions/$sid/whip');
+    final response = await _mediaRequest(
+      'POST',
+      uri,
+      bearer: grant.token,
+      body: offerSdp,
+      contentType: 'application/sdp',
+    );
+    if (response.statusCode != 201) {
+      throw ApiException(response.statusCode, 'whip_failed', '송출 연결에 실패했습니다.');
+    }
+    final location = response.headers['location'] ?? '';
+    final prefix = '/api/v1/live-sessions/$sid/whip/';
+    final parsed = Uri.tryParse(location);
+    if (parsed == null ||
+        !parsed.path.startsWith(prefix) ||
+        parsed.path.substring(prefix.length).contains('/') ||
+        parsed.path.length == prefix.length ||
+        response.headers['content-type']?.split(';').first.trim() !=
+            'application/sdp' ||
+        response.body.isEmpty) {
+      throw ApiException(0, 'invalid_whip_response', '송출 응답이 올바르지 않습니다.');
+    }
+    _mediaUri(location, parsed.path);
+    return WhipResource(sid, location, response.headers['etag'], response.body);
+  }
+
+  Future<void> deleteWhip(WhipResource resource) async {
+    final path = Uri.parse(resource.location).path;
+    final prefix = '/api/v1/live-sessions/${resource.sessionId}/whip/';
+    if (!path.startsWith(prefix) ||
+        path.length == prefix.length ||
+        path.substring(prefix.length).contains('/')) {
+      throw ApiException(0, 'unsafe_media_url', '잘못된 미디어 주소입니다.');
+    }
+    final response = await _mediaRequest(
+      'DELETE',
+      _mediaUri(resource.location, path),
+      etag: resource.etag,
+      auth: true,
+    );
+    if (response.statusCode != 204 && response.statusCode != 404) {
+      throw ApiException(
+        response.statusCode,
+        'whip_delete_failed',
+        '송출 연결 종료에 실패했습니다.',
+      );
+    }
+  }
+
+  Future<PlaybackAccess> playback(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/playback');
+    return PlaybackAccess(
+      data['sessionId'] as String,
+      data['masterUrl'] as String,
+    );
   }
 
   Future<LiveSession?> currentSession(String broadcastId) async {
-    final data = await _request('GET', '/broadcasts/$broadcastId/sessions/current');
+    final data = await _request(
+      'GET',
+      '/broadcasts/$broadcastId/sessions/current',
+    );
     final value = data['session'];
-    return value == null ? null : LiveSession.fromJson(value as Map<String, dynamic>);
+    return value == null
+        ? null
+        : LiveSession.fromJson(value as Map<String, dynamic>);
   }
 
-  Future<LiveSession> cancelSession(String broadcastId, String sessionId) async {
-    final data = await _request('POST', '/broadcasts/$broadcastId/sessions/$sessionId/stop', auth: true);
+  Future<LiveSession> cancelSession(
+    String broadcastId,
+    String sessionId,
+  ) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/sessions/$sessionId/stop',
+      auth: true,
+    );
     return LiveSession.fromJson(data['session'] as Map<String, dynamic>);
   }
 }

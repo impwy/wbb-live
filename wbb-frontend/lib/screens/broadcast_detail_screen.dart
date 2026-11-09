@@ -1,19 +1,26 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../api/wbb_api.dart';
-import '../api/session_start_key.dart';
 import '../models/broadcast.dart';
 import '../models/live_session.dart';
+import '../media/live_publisher.dart';
+import '../media/media_platform.dart';
 import '../state/auth_controller.dart';
 
-/// Public detail and owner preparation. Media controls arrive in 04-B.
+/// Public detail, owner capture controls and anonymous playback.
 class BroadcastDetailScreen extends StatefulWidget {
-  const BroadcastDetailScreen({super.key, required this.broadcastId});
+  const BroadcastDetailScreen({
+    super.key,
+    required this.broadcastId,
+    this.publisher,
+    this.mediaPlatform,
+  });
   final String broadcastId;
+  final LivePublisher? publisher;
+  final MediaPlatform? mediaPlatform;
   @override
   State<BroadcastDetailScreen> createState() => _BroadcastDetailScreenState();
 }
@@ -26,10 +33,18 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
   int? _fetchingEpoch;
   bool get _fetching => _fetchingEpoch != null;
   bool _acting = false;
+  bool _canceling = false;
+  int _actionEpoch = 0;
   String? _error;
   String? _actionError;
-  String? _pendingStartKey;
   Timer? _poll;
+  LivePublisher? _publisher;
+  ViewerMediaPlayer? _player;
+  String? _playerSessionId;
+  String? _playbackTargetSessionId;
+  String _playbackStatus = '방송 준비 중';
+  int? _checkingPlaybackEpoch;
+  int _playbackEpoch = 0;
 
   @override
   void initState() {
@@ -44,7 +59,112 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _loadEpoch++;
+    _playbackEpoch++;
+    _clearPlayer();
+    if (_publisher?.broadcastId == widget.broadcastId) {
+      unawaited(_publisher!.stop());
+    }
     super.dispose();
+  }
+
+  LivePublisher get _livePublisher =>
+      _publisher ??= widget.publisher ?? context.read<LivePublisher>();
+
+  void _clearPlayer() {
+    _player?.dispose();
+    _player = null;
+    _playerSessionId = null;
+  }
+
+  Future<void> _checkPlayback(LiveSession? session) async {
+    if (session?.state != 'live') {
+      _playbackEpoch++;
+      _checkingPlaybackEpoch = null;
+      _playbackTargetSessionId = null;
+      _clearPlayer();
+      if (mounted) {
+        setState(() {
+          _playbackStatus = '방송 준비 중';
+        });
+      }
+      return;
+    }
+    if (_playbackTargetSessionId != session!.id) {
+      _playbackTargetSessionId = session.id;
+      _playbackEpoch++;
+      _checkingPlaybackEpoch = null;
+      _clearPlayer();
+      if (mounted) {
+        setState(() {
+          _playbackStatus = '새 방송 영상 준비 중입니다.';
+        });
+      }
+    }
+    if (_playerSessionId == session.id ||
+        _checkingPlaybackEpoch == _playbackEpoch) {
+      return;
+    }
+    final epoch = ++_playbackEpoch;
+    _checkingPlaybackEpoch = epoch;
+    try {
+      final access = await context.read<ApiClient>().playback(
+        widget.broadcastId,
+      );
+      if (!mounted ||
+          epoch != _playbackEpoch ||
+          _session?.id != access.sessionId ||
+          _session?.state != 'live') {
+        return;
+      }
+      final media = widget.mediaPlatform ?? context.read<MediaPlatform>();
+      final next = media.newViewer(access.masterUrl, (event) {
+        if (!mounted || epoch != _playbackEpoch) return;
+        setState(() {
+          _playbackStatus = event == 'autoplay-blocked'
+              ? '자동재생이 차단되었습니다. 재생을 눌러 주세요.'
+              : '재생 오류가 발생했습니다. 다시 시도해 주세요.';
+        });
+      });
+      setState(() {
+        _clearPlayer();
+        _player = next;
+        _playerSessionId = access.sessionId;
+        _playbackStatus = '재생할 수 있습니다.';
+      });
+    } on ApiException catch (e) {
+      if (!mounted || epoch != _playbackEpoch) return;
+      setState(() {
+        _playbackStatus = e.status == 409
+            ? '영상 준비 중입니다. 잠시 후 다시 시도해 주세요.'
+            : e.message;
+      });
+    } finally {
+      if (_checkingPlaybackEpoch == epoch) _checkingPlaybackEpoch = null;
+    }
+  }
+
+  Future<void> _play({required bool withSound}) async {
+    final player = _player;
+    if (player == null) return;
+    try {
+      await player.play(withSound: withSound);
+      if (mounted && identical(player, _player)) {
+        setState(() {
+          _playbackStatus = '재생 중';
+        });
+      }
+    } catch (_) {
+      if (mounted && identical(player, _player)) {
+        setState(() {
+          _playbackStatus = '재생이 차단되거나 실패했습니다. 다시 눌러 주세요.';
+        });
+      }
+    }
+  }
+
+  Future<void> _resumeAudio() async {
+    await _livePublisher.resumeAudio();
   }
 
   Future<void> _load({bool silent = false, bool force = false}) async {
@@ -67,8 +187,15 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
         _session = session;
         _loading = false;
         _error = null;
-        if (session?.state == 'ended') _pendingStartKey = null;
       });
+      if (_publisher?.broadcastId == widget.broadcastId &&
+          _publisher?.sessionId != null &&
+          (_publisher?.sessionId != session?.id ||
+              session?.state == 'stopping' ||
+              session?.state == 'ended')) {
+        unawaited(_publisher!.stop());
+      }
+      unawaited(_checkPlayback(session));
     } on ApiException catch (e) {
       if (!mounted || epoch != _loadEpoch) return;
       setState(() {
@@ -83,37 +210,26 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     }
   }
 
-  String _newStartKey() {
-    return createSessionStartKey(Random.secure());
-  }
-
   Future<void> _prepare() async {
     if (_acting) return;
-    final key = _pendingStartKey ??= _newStartKey();
+    final epoch = ++_actionEpoch;
     setState(() {
       _acting = true;
       _actionError = null;
     });
     try {
-      final session = await context.read<ApiClient>().prepareSession(
-        widget.broadcastId,
-        source: 'screen',
-        idempotencyKey: key,
-      );
-      if (!mounted) return;
-      setState(() {
-        _session = session;
-        _pendingStartKey = null;
-      });
+      // LivePublisher invokes getDisplayMedia before its first await/API call.
+      await _livePublisher.begin(widget.broadcastId);
+      if (!mounted || epoch != _actionEpoch) return;
       await _load(silent: true, force: true);
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!mounted || epoch != _actionEpoch) return;
       setState(() {
         _actionError = e.message;
       });
       if (e.status == 409) await _load(silent: true, force: true);
     } finally {
-      if (mounted) {
+      if (mounted && epoch == _actionEpoch) {
         setState(() {
           _acting = false;
         });
@@ -122,20 +238,28 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
   }
 
   Future<void> _cancel() async {
-    if (_acting || _session == null) return;
+    if (_canceling || (_session == null && !(_publisher?.busy ?? false))) {
+      return;
+    }
+    ++_actionEpoch;
     setState(() {
-      _acting = true;
+      _acting = false;
+      _canceling = true;
       _actionError = null;
     });
     try {
-      final session = await context.read<ApiClient>().cancelSession(
-        widget.broadcastId,
-        _session!.id,
-      );
+      LiveSession? session;
+      if (_publisher?.broadcastId == widget.broadcastId && _publisher!.busy) {
+        await _publisher!.stop();
+      } else if (_session != null) {
+        session = await context.read<ApiClient>().cancelSession(
+          widget.broadcastId,
+          _session!.id,
+        );
+      }
       if (!mounted) return;
       setState(() {
-        _session = session;
-        _pendingStartKey = null;
+        if (session != null) _session = session;
       });
       await _load(silent: true, force: true);
     } on ApiException catch (e) {
@@ -147,7 +271,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _acting = false;
+          _canceling = false;
         });
       }
     }
@@ -159,6 +283,10 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
     final owner =
         b != null && context.watch<AuthController>().user?.id == b.ownerId;
     final state = _session?.state ?? b?.status ?? 'ready';
+    final publisher = owner
+        ? (widget.publisher ?? context.watch<LivePublisher>())
+        : null;
+    if (owner) _publisher ??= publisher;
     return Scaffold(
       appBar: AppBar(
         title: Text(b?.title ?? '방송'),
@@ -209,23 +337,84 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen> {
                 ],
                 const SizedBox(height: 20),
                 if (state == 'starting')
-                  const Text('회차를 준비 중입니다. 아직 송출이나 시청은 시작되지 않았습니다.'),
+                  const Text('회차를 준비 중입니다. 영상 준비 전에는 시청할 수 없습니다.'),
                 if (state == 'stopping')
                   const Text('종료 처리 중입니다. 잠시 후 상태를 새로고침해 주세요.'),
                 if (owner && (state == 'ready' || state == 'ended')) ...[
                   FilledButton(
                     key: const Key('session-prepare'),
-                    onPressed: _acting ? null : _prepare,
-                    child: const Text('방송 회차 준비'),
+                    onPressed: _acting || publisher!.busy ? null : _prepare,
+                    child: const Text('화면 공유 시작'),
                   ),
-                  const Text('화면 공유와 실제 송출은 이후 단계에서 제공됩니다.'),
                 ],
-                if (owner && state == 'starting')
+                if (owner &&
+                    (publisher!.busy || state == 'starting' || state == 'live'))
                   OutlinedButton(
                     key: const Key('session-cancel'),
-                    onPressed: _acting ? null : _cancel,
-                    child: const Text('준비 취소'),
+                    onPressed: _canceling ? null : _cancel,
+                    child: const Text('방송 중지'),
                   ),
+                if (owner && publisher!.broadcastId == widget.broadcastId) ...[
+                  Text(
+                    '송출: ${publisher.phase.name}',
+                    key: const Key('publish-phase'),
+                  ),
+                  if (publisher.message != null) Text(publisher.message!),
+                  if (!publisher.sharedAudio)
+                    const Text('공유 소리가 없습니다. 소리를 포함한 탭을 다시 선택해 주세요.'),
+                  if (!publisher.audioRunning && publisher.busy)
+                    OutlinedButton(
+                      key: const Key('publish-resume-audio'),
+                      onPressed: _resumeAudio,
+                      child: const Text('오디오 다시 시작'),
+                    ),
+                  if (publisher.audioRunning &&
+                      publisher.phase == PublishPhase.publishing)
+                    const Text('오디오 실행 중', key: Key('publish-audio-running')),
+                  if (publisher.preview != null)
+                    SizedBox(height: 240, child: publisher.preview),
+                ],
+                const SizedBox(height: 16),
+                Text(_playbackStatus, key: const Key('playback-status')),
+                if (_player != null)
+                  SizedBox(height: 320, child: _player!.view),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      key: const Key('playback-play'),
+                      onPressed: _player == null
+                          ? null
+                          : () => _play(withSound: false),
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('재생'),
+                    ),
+                    OutlinedButton(
+                      key: const Key('playback-sound'),
+                      onPressed: _player == null
+                          ? null
+                          : () => _play(withSound: true),
+                      child: const Text('소리 켜기'),
+                    ),
+                    OutlinedButton(
+                      key: const Key('playback-live'),
+                      onPressed: _player == null
+                          ? null
+                          : () => _player?.goLive(),
+                      child: const Text('라이브로 이동'),
+                    ),
+                    OutlinedButton(
+                      key: const Key('playback-retry'),
+                      onPressed: state != 'live'
+                          ? null
+                          : () {
+                              _clearPlayer();
+                              _checkPlayback(_session);
+                            },
+                      child: const Text('재시도'),
+                    ),
+                  ],
+                ),
                 if (_actionError != null)
                   Text(_actionError!, key: const Key('session-action-error')),
               ],

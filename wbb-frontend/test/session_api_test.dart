@@ -64,7 +64,7 @@ void main() {
         source: 'screen',
         idempotencyKey: 'stable-key-0001',
       );
-      expect(session.state, 'starting');
+      expect(session.session.state, 'starting');
       expect(seenKeys, ['stable-key-0001', 'stable-key-0001']);
     },
   );

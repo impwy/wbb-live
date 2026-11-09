@@ -1,6 +1,6 @@
 # 인증 미디어 서버 로컬 검증
 
-04-B1의 인증 WHIP, MediaMTX·FFmpeg worker, 익명 LL-HLS 접근 제어를 확인하는 전용 환경이다. Flutter 송출 화면은 후속 04-B2이며 이 환경의 루트 페이지는 검증용 텍스트다. 실제 화면·카메라 권한을 요청하지 않고 두 Chrome 프로세스에서 합성 영상과 두 음원을 전송한다.
+04-B1의 인증 WHIP, MediaMTX·FFmpeg worker, 익명 LL-HLS 접근 제어와04-B2 Flutter 화면을 확인하는 전용 환경이다. 기본 구성의 루트는 검증용 텍스트이며, 아래 Flutter overlay를 적용하면 제품 화면을 제공한다. 자동 검증기는 실제 화면·카메라 권한을 요청하지 않고 두 Chrome 프로세스에서 합성 영상과 두 음원을 전송한다.
 
 필요 환경: Docker Compose, Node.js/npm, 설치된 Google Chrome. 사용 포트는 loopback HTTPS 19443, PostgreSQL 55438, ICE UDP 19391이다. 기존 미디어 실험의 포트와 구분된다. 외부 서비스 배포 구성은 아니다.
 
@@ -26,6 +26,24 @@ node experiments/local-secure-media/verify-browser.mjs
 ```
 
 검증기는 로컬 Caddy 인증서의 공개키를 Chrome에 한정하여 허용한다. 시스템 인증서 저장소를 변경하지 않는다. 정상 종료 시 영상 디코딩·두 음원 피크·ENDED·FFmpeg 종료·해당 회차 ingress/RTSP 부재와 이전 HLS 접근 거절을 출력한다. 실패와 타임아웃은 성공으로 취급하지 않는다.
+
+## Flutter 제품 화면
+
+추가 환경은 Flutter SDK이며 `flutter`가 PATH에 있어야 한다. 위 `.env` 준비 후 저장소 루트에서 실행한다. 기존 전용 스택에 활성 방송이 있다면 먼저 종료한다. overlay 적용은 MediaMTX를 재생성할 수 있다.
+
+```sh
+(cd wbb-frontend && flutter pub get && flutter build web --release --no-web-resources-cdn)
+docker compose --env-file experiments/local-secure-media/.env \
+  -f experiments/local-secure-media/compose.yml \
+  -f experiments/local-secure-media/compose.flutter.yml up -d --build
+node experiments/local-secure-media/verify-flutter.mjs
+```
+
+로컬 주소는 `https://localhost:19443`이다. Caddy 내부 인증서를 사용하는 로컬 테스트 환경이며 공개 서비스 URL이 아니다. 자동 검증기는 위와 같이 해당 인증서 공개키만 허용한다.
+
+제품 확인 흐름은 가입·로그인→내 방송→방송 등록→상세의 **화면 공유 시작**→화면/탭과 공유 소리 선택·마이크 허용이다. 별도 비로그인 브라우저에서 방송을 열고 준비가 끝나면 **재생** 또는 **소리 켜기**를 누른다. **방송 중지** 후 서버의 종료 완료와 재생 비활성화를 확인한다. 공유 소리 지원은 OS·브라우저·선택한 화면 종류에 따라 다르며, 실제 PC 공유·물리 두 기기·모바일 인수 결과는 별도로 기록한다.
+
+Flutter overlay는 H264 초기 전송 지연을 고려해 `webrtcTrackGatherTimeout: 6s`를 사용한다. 두 트랙이 먼저 도착하면 즉시 진행한다. 합성 검증 성공을 실제 캡처·외부망 지원 완료로 간주하지 않는다. [04-B2 검증 현황](../../docs/verification/04b2-flutter-live.md)을 참고한다.
 
 지속 재생과 lease 관측:
 

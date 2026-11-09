@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:wbb_frontend/api/wbb_api.dart';
+import 'package:wbb_frontend/media/live_publisher.dart';
+import 'package:wbb_frontend/media/media_platform.dart';
 import 'package:wbb_frontend/screens/broadcast_detail_screen.dart';
 import 'package:wbb_frontend/state/auth_controller.dart';
 
@@ -15,6 +17,45 @@ http.Response jsonResponse(Object body, [int status = 200]) => http.Response(
   status,
   headers: {'content-type': 'application/json'},
 );
+
+class SessionUiApiClient extends ApiClient {
+  SessionUiApiClient({required super.client});
+  @override
+  Future<WhipResource> postWhip(
+    PreparedSession prepared,
+    String offerSdp,
+  ) async => WhipResource(
+    prepared.session.id,
+    '/api/v1/live-sessions/${prepared.session.id}/whip/test-resource',
+    null,
+    'v=0',
+  );
+  @override
+  Future<void> deleteWhip(WhipResource resource) async {}
+}
+
+class SessionUiMedia implements MediaPlatform {
+  @override
+  PublisherMediaAttempt newPublisher(void Function() onDisplayEnded) =>
+      SessionUiAttempt();
+  @override
+  ViewerMediaPlayer newViewer(String url, void Function(String) onEvent) =>
+      throw UnimplementedError();
+}
+
+class SessionUiAttempt implements PublisherMediaAttempt {
+  @override
+  Widget get preview => const SizedBox();
+  @override
+  Future<CaptureOffer> captureAndOffer() async =>
+      const CaptureOffer(sdp: 'v=0', sharedAudio: true, audioRunning: true);
+  @override
+  Future<void> acceptAnswer(String answerSdp) async {}
+  @override
+  Future<bool> resumeAudio() async => true;
+  @override
+  Future<void> stopLocal() async {}
+}
 
 Map<String, Object?> get broadcast => {
   'id': 'b1',
@@ -47,7 +88,7 @@ void main() {
           var current = <String, Object?>{'session': cancel ? session : null};
           Completer<http.Response>? delayed;
           Completer<void>? requested;
-          final api = ApiClient(
+          final api = SessionUiApiClient(
             client: MockClient((request) async {
               final path = request.url.path;
               if (path.endsWith('/auth/login')) {
@@ -100,6 +141,9 @@ void main() {
             MultiProvider(
               providers: [
                 Provider<ApiClient>.value(value: api),
+                ChangeNotifierProvider(
+                  create: (_) => LivePublisher(api, SessionUiMedia()),
+                ),
                 ChangeNotifierProvider<AuthController>.value(value: auth),
               ],
               child: const MaterialApp(
@@ -125,6 +169,10 @@ void main() {
             await tester.pumpAndSettle();
             expect(find.text('상태: 종료'), findsOneWidget);
             expect(find.byKey(const Key('session-prepare')), findsOneWidget);
+            // The unresolved request proved it could not block the current
+            // poll. Release the fake transport before the test clock ends.
+            stale.complete(jsonResponse({'session': cancel ? session : null}));
+            await tester.pump();
           } else {
             stale.complete(jsonResponse({'session': cancel ? session : null}));
             await tester.pumpAndSettle();
@@ -146,7 +194,7 @@ void main() {
     final old = Completer<http.Response>();
     final newest = Completer<http.Response>();
     var currentCalls = 0;
-    final api = ApiClient(
+    final api = SessionUiApiClient(
       client: MockClient((request) async {
         final path = request.url.path;
         if (path.endsWith('/auth/login')) {
@@ -178,6 +226,9 @@ void main() {
       MultiProvider(
         providers: [
           Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider(
+            create: (_) => LivePublisher(api, SessionUiMedia()),
+          ),
           ChangeNotifierProvider<AuthController>.value(value: auth),
         ],
         child: const MaterialApp(
@@ -204,7 +255,7 @@ void main() {
   testWidgets(
     'signed-out visitor reads preparation status without control or playback',
     (tester) async {
-      final api = ApiClient(
+      final api = SessionUiApiClient(
         client: MockClient((request) async {
           if (request.method == 'GET' &&
               request.url.path.endsWith('/broadcasts/b1')) {
@@ -229,6 +280,9 @@ void main() {
         MultiProvider(
           providers: [
             Provider<ApiClient>.value(value: api),
+            ChangeNotifierProvider(
+              create: (_) => LivePublisher(api, SessionUiMedia()),
+            ),
             ChangeNotifierProvider<AuthController>(
               create: (_) => AuthController(api),
             ),
@@ -243,7 +297,12 @@ void main() {
       expect(find.textContaining('준비 중'), findsWidgets);
       expect(find.byKey(const Key('session-prepare')), findsNothing);
       expect(find.byKey(const Key('session-cancel')), findsNothing);
-      expect(find.byIcon(Icons.play_arrow), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('playback-play')))
+            .onPressed,
+        isNull,
+      );
       await tester.tap(find.byKey(const Key('detail-refresh')));
       await tester.pumpAndSettle();
       expect(find.textContaining('준비 중'), findsWidgets);
@@ -256,7 +315,7 @@ void main() {
       var current = <String, Object?>{'session': null};
       var startCalls = 0;
       var stopCalls = 0;
-      final api = ApiClient(
+      final api = SessionUiApiClient(
         client: MockClient((request) async {
           final p = request.url.path;
           if (p.endsWith('/auth/login')) {
@@ -302,6 +361,9 @@ void main() {
         MultiProvider(
           providers: [
             Provider<ApiClient>.value(value: api),
+            ChangeNotifierProvider(
+              create: (_) => LivePublisher(api, SessionUiMedia()),
+            ),
             ChangeNotifierProvider<AuthController>.value(value: auth),
           ],
           child: const MaterialApp(

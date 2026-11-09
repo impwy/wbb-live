@@ -4,6 +4,14 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 04-B2 독립 검증 완료·게시 준비
+
+조정자가 동결 제품의 analyze0·Flutter53개·JS3개·릴리스 빌드와 두 Chrome 제품 UI를 독립 검증했다. H264/Opus·두 음원 수신·pause유지·정확한ended·이전HLS차단·실제자원부재를 확인했고 검증 중 파일 해시는 동일했다. 전용 활성0, 기존8090 HTTP200이다. 두 축 잔여 확정 결함0건이며 지정 구현자는 계속 편집 중단·대기다. work/flutter-live를 게시한 뒤05-A 단일 품질 카메라·마이크 구현을 인계한다. unknown POST 자동회수와 실제 기기/외부망은 미완료로 유지한다.
+
+### 최신: 04-B2 구현 중단·독립 검증 인계
+
+지정 대체 Codex가 work/flutter-live의 제품 코드와 전용 스택 편집을 중단하고 인계를 보고했다. 자체 analyze0·Flutter53개·JS3개·릴리스 빌드 및 두 Chrome 제품 UI 흐름을 통과했다고 보고했으며 조정자는 산출물을 확인하고 독립 재실행 중이다. 전용 활성 회차0에서 검증을 시작했다. 전용 Caddy/API/worker/MediaMTX/PostgreSQL/Redis는 유지하고 기존8090을 보존한다. Flutter overlay의 track gather6초는 H264 초기 전송 지연 대조 결과이며 원래04-B1 설정은 유지한다. 현재 조정자만 검증 자원을 사용하고 구현자는 대기한다. 검증 결과는 docs/verification/04b2-flutter-live.md, 리뷰는 docs/reviews/04b2-flutter-live.md에 기록한다. 커밋·게시·05-A 구현은 아직 시작하지 않았다.
+
 ### 최신: 04-B2 Flutter 통합 시작
 
 서버 체크포인트107cdd8은 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)(base work/local-session-control)으로 게시했다. 조정자 SIGKILL·자동 재시작·새 시청자·blocking HLS 종료 독립 검증을 완료했고 전용 활성 회차0과 기존8090 HTTP200을 확인했다. 새 브랜치work/flutter-live에서 지정 대체 Codex가04-B2 Flutter PC 송출·익명 시청을 단독 구현한다. 티켓의04-B2 인터페이스·자원 소유·클릭 활성화·인증 만료·늦은 응답·재생 상태 계약을 따른다. 조정자는 리뷰와 독립 검증을 계속한다. unknown POST 자동회수와 실제기기/외부망 관문은 그대로 미완료다. 새pi/모델/구현자 추가는 없다.

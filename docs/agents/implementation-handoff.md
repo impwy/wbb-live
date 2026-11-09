@@ -6,6 +6,9 @@
 
 ### 2026-11-09 개발 재개
 
+- 게시 체크포인트: `3b4c6fd`, [Draft PR4](https://github.com/impwy/wbb-live/pull/4), base `work/google-login`. 구현 담당은 편집 중단/대기이며 조정자는 실제 기기 인수를 준비한다. GitHub 연결 도구의 PR 쓰기 권한 부족 후 기존 로컬 CLI로 게시했다.
+- 다음 작업: Cloudflare live 레코드 유형·대상·프록시 상태에 대한 사용자 응답을 받고 DNS only 경로를 확정한다. 검토된 공개 Caddy 사본은 보호된 서버 staging에만 있으며 아직 live 설정을 적용하지 않았다. 필요한 ICE/TCP18391 공유기 전달·방화벽을 확인하고 아이폰 Chrome Wi-Fi/이동통신망 실측을 진행한다. 기존 사이트 전체 설정/allowlist를 과거 사본으로 덮어쓰지 않는다.
+
 - 최신 상태: 현재 구현 담당은 지정 대체 Codex다. pi가 구현 중429/1310 `Weekly/Monthly Limit Exhausted`를 반환하고3회 재시도 후 종료했다. 응답의 reset은2026-11-14 20:53:52이며 시간대는 미표기다. 지정 대체 Codex의 인계 지시 수신과 실제 파일/변경 검토 시작을 확인했다. 시간만으로 복구를 추정하지 않는다.
 - 최신 코드 체크포인트: `work/media-device-acceptance`의 실기기 검증 환경은 지정 대체 Codex가 수정·검사를 마치고 편집 중단/리뷰 대기다. 두 축 리뷰 잔여 확정 결함0건, 조정자 독립 selftest20·HTTP16·직접 Chrome14검사와 FFmpeg 종료/기존 자원 보존 확인. 원래 CPU83 전체 재실행 및 실제 기기/외부망은 미완료다. 정상 대기를 실패로 보고 중복 구현하지 않는다.
 - 사용자가 실제 휴대폰·외부망 검증 진행을 요청했고 대상은 아이폰 Google Chrome이다. 공개 구성은 전체 운영 Caddy의 별도 보호 사본에서 adapt/validate 통과, 운영 적용은 아직 없다. Cloudflare live DNS 정보·변경 수단과 ICE 포트 전달/방화벽을 확인한 뒤 `docs/verification/02-device-external-plan.md`를 따른다. 실제 관측은 `docs/verification/02-device-acceptance.md`가 기준이다.

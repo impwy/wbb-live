@@ -1,6 +1,6 @@
 # 07-C: 방송 outbox의 Kafka 전달
 
-**Status:** in-progress
+**Status:** in-review
 **Blocked by:** 04-B1 상태·outbox 원자 저장과 정상/권한/종료의 로컬 독립 검증(완료).05-A 제품d762510/PR8은 로컬 독립 검증 완료이며 CI는 별도 확인한다.
 **구현 담당:** 지정 대체 Codex 단독. 조정자는 설계·독립 리뷰·검증을 담당한다.
 
@@ -40,3 +40,7 @@ unknown WHIP POST 자동종결은 현재실행식별자 조회만으로 증명�
 - claim fencing은 성공뿐 아니라 실패 기록·재시도 예약·격리·해제에도 적용한다. event_id와 현재 claim token, 미발행 상태의 조건부 변경0건은 소유권 상실이다. 이전 소유자의 오류가 새 소유자의 성공을 덮어쓰면 안 된다.
 - 인증 실패·topic 부재·broker 설정/용량 문제를 개별 이벤트의 poison으로 분류하지 않는다. 크기 오류도 해당 레코드의 실제 크기와 적용 제한이 근거여야 한다. 배치 전체 오류만으로 모두 격리하지 않는다. 격리 시 원본과 published_at=NULL을 보존하며 성공으로 집계하지 않는다.
 - 재처리는 정확한 격리 항목만 조건부로 허용하고 이전 claim 세대를 무효화한다. 발행된 항목을 다시 미발행으로 돌리거나 event_id/version/occurred_at/payload를 변경하지 않는다. 원인이 남으면 재격리될 수 있음을 표시한다. 재처리 후 이전 claim의 늦은 성공·실패도 검증한다.
+
+## 검증 인계
+
+제품 동결 후 조정자의 전체 Go race·vet, 실제 DB 재시작/TERM, Kafka 중단 Flutter camera 미디어 검사가 통과했다. 두 축 잔여 확정 결함0건. 상세 결과는 docs/verification/07c-outbox-delivery.md와 docs/reviews/07c-outbox-delivery.md를 따른다. 게시 및 CI 확인 뒤 이 하위 티켓 완료를 판정하며 부모07은미완료다.

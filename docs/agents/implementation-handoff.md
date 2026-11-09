@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 07-C 구현 동결·독립 검증 인계
+
+지정 대체 Codex가 work/outbox-delivery의 제품/테스트 편집과 자원 조작을 중단했다고 명시했다. 기준a78a059 이후 미커밋 구현이며 조정자가15파일해시를기록했다. 구현자 전체race·vet·build·Kafka장애미디어·DB재시작/TERM 검사는통과했다. 조정자 전체Go race도통과했고 실제프로세스/DB재시작 독립검증을이어간다. 기존미디어활성0(ended34),8090 HTTP200과Kafka healthy를확인했다. 구현자는새범위시작없이대기한다. 다음07-A1범위는 .scratch/wbb-live/issues/07a1-media-completion-spike.md이며07-C독립검증/게시후별도인계한다.
+
 ### 최신: 07-C outbox 전달 구현 인계
 
 05-A 제품d762510을 [Draft PR8](https://github.com/impwy/wbb-live/pull/8)(base work/flutter-live)에 게시했다. 새work/outbox-delivery에서 지정 대체 Codex가07c-outbox-delivery.md를 단독 구현한다. 기존상태/outbox 원자저장 위에 Kafka 전달·재시도·운영 재처리를 연결한다. unknownPOST/인박스소비/실제기기 관문을 완료로 간주하지 않는다. 구현 전짧은 claim/ack/실패계약을보고하고 승인범위안에서진행한다. 기존8090와전용미디어스택을보존하고활성0확인후전용자원만사용한다. 조정자는독립리뷰/검증을담당한다.

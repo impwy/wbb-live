@@ -42,3 +42,7 @@ Spec: 제품 로직의 새 확정 결함은 없으며 운영 문서 P2 1건을 �
 두 리뷰는 읽기 전용 정적 검사이며, 동결 전 문서와 최종 실행 결과를 완료로 간주하지 않는다.
 
 조정자의 outboxdelivery·CLI 단위 race 검사는 통과했다. 실제 PostgreSQL 환경변수 없이 실행했으므로 통합 검사는 제외된다. 구현자 최종 전체 Go race 로그는 httpapi 98.831초 및 outboxdelivery 6.767초 등 전체 통과를 기록했다. 이후 requeue 뒤 늦은 Retry/Quarantine 회귀가 추가되어 해당 변경 재검사가 필요하다. README는 장애 재현·공식 근거를 보완했으며 실제 DB 컨테이너 재시작은 미검증으로 명시했다. 실제 DB 재시작과 SIGTERM 후 재개는 완료기준이므로 검증 전07-C 완료 처리하지 않는다.
+
+## 최종 후보 판정
+
+운영문서보완과process integration 추가분을두축에서재검토했다. Standards0건,Spec0건이며추가확정결함은없다. INSERT후UPDATE의fixture경합은단일INSERT에서next_attempt_at를설정하도록수정했다. 조정자의전체Go race·vet,실제DB재시작/TERM,실제Kafka중단Flutter미디어검사가통과했고검증중제품해시는변경되지않았다. 상세증거와검증한계는docs/verification/07c-outbox-delivery.md를따른다.

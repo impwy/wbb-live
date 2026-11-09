@@ -2,7 +2,7 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 제품 송출·시청 통합은 아직 미완료.
+- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 04-A 로컬 회차 준비·취소와 영속 상태는 독립 검증·CI를 통과했습니다. 제품 송출·시청 통합은04-B에서 진행 중입니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
 - **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
 - 설계 계약: `docs/design.md` (Codex 관리)
@@ -73,6 +73,10 @@ WBB_STATIC_DIR=../wbb-frontend/build/web make run-backend
 
 `http://localhost:8080`에서 가입/로그인 화면의 Google 버튼으로 시작한다. API와 Flutter를 같은 출처에서 제공해야 `/auth/google/complete`의 직접 진입·새로고침이 연결된다. 분리된 개발 서버3000만 실행한 상태는 이 확인 환경이 아니다. 정상 로그인 후 내 방송 등록·새로고침·로그아웃, 취소 후 재시도, 같은 이메일 계정 충돌 안내를 확인한다. 버튼은 서버의 `/api/v1/auth/providers`가 Google 활성화를 알릴 때 표시된다. 모의 provider 검사 성공을 실제 Google 로그인 성공으로 취급하지 않는다.
 
+## 로컬 방송 회차 준비·취소
+
+가입·로그인 후 내 방송을 등록하고 상세 화면에서 **방송 회차 준비**를 누릅니다. 준비 중에는 **준비 취소**로 종료를 요청할 수 있고, 별도 비로그인 화면에서도 상태를 조회할 수 있습니다. 준비가60초를 넘으면 서버의 정리 작업이 종료 처리합니다. 이 단계는 화면·카메라 캡처나 영상 송출을 시작하지 않습니다. 실제 송출·재생 UI는04-B 후속입니다.
+
 ## API 요약 (`/api/v1`)
 
 | 메서드/경로 | 권한 | 비고 |
@@ -89,7 +93,11 @@ WBB_STATIC_DIR=../wbb-frontend/build/web make run-backend
 | POST `/broadcasts` | 로그인 | 201. `ownerId`는 서버가 결정 |
 | GET `/broadcasts/{id}` | 공개 | 404 포함 |
 | PATCH `/broadcasts/{id}` | 소유자 | `version` 조건부 갱신, 충돌 409 |
-| DELETE `/broadcasts/{id}?version=N` | 소유자 | soft delete, 204 |
+| DELETE `/broadcasts/{id}?version=N` | 소유자 | soft delete, 204; 활성 회차가 있으면409 |
+| POST `/broadcasts/{id}/sessions` | 소유자 | source, Idempotency-Key;202 준비 회차·단기 grant |
+| GET `/broadcasts/{id}/sessions/current` | 공개 | 현재/최근 회차 또는 null; 민감 정보 제외 |
+| POST `/broadcasts/{id}/sessions/{sid}/stop` | 소유자 |202 종료 처리, 이미 종료면200 |
+| POST `/broadcasts/{id}/sessions/{sid}/publish-grants` | 원래 로그인 family의 소유자 | 조건을 만족하는 준비 회차의 만료 grant 갱신 |
 | GET `/health/live`, `/health/ready` | 공개/내부 | 프로세스 생존 / DB·마이그레이션 준비 |
 
 오류 형식: `{"error":{"code","message","requestId"}}`. 인증 세션의 최종 원장은 PostgreSQL `auth_session_families`/`auth_sessions`이며 Redis는 캐시일 뿐(장애 시 보호 API 503 fail-closed, 누락 시 원장으로 자가 복구).

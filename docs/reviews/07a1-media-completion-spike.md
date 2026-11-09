@@ -28,3 +28,11 @@ Connected/Failed의단순상태관찰goroutine은미디어/생성/자원보유�
 ## 초기 구현 중간 지적
 
 `internal/wbbcompletion/registry.go` 초기후보는epoch를이력길이+1인숫자로만표현하고과거epoch완료도숫자범위로판정한다. ADR의무작위epoch_id와연속sequence분리계약을충족하지않는다. 새저장소에같은slot을명시bootstrap하면과거epoch값과충돌할수있고,내부Root는외부tuple에포함되지않는다. 무작위ID를영속화하고서명·조회·종료가정확한epoch ID를사용하도록수정요청했다. 최종patch검토전중간후보에대한지적이다.
+
+초기session연결patch의 `sx.initialize()`는goroutine을먼저시작한뒤AttachSession으로참조를등록했다. 이미취소된parent context에서는DoneSession이선행하여참조계수와완료판정이틀릴수있으므로,ctx초기화→작업참조등록→goroutine시작순서로수정요청했다. 이미취소된context와동시close회귀가필요하다. 무작위epoch ID와sequence분리수정은코드상추가됐으며최종인증/조회연결및실제재시작검증은미완료다.
+
+### 수정 후 중간 확인
+
+무작위 epoch ID와 별도 sequence, 정확한 과거 ID 조회가 추가됐다. session.initialize에서 context 초기화 후 AttachSession을 등록하고 goroutine을 시작하도록 순서를 수정한 것도 확인했다. 기초 registry 검사 통과 보고를 받았으나 프로토콜 패키지의 `[no tests to run]` 결과는 컴파일 확인이며 실제 송출 종료 회귀 통과로 보지 않는다.
+
+추가 독립 소스 검토에서 path.RemovePublisher의 취소 후 done 대기는 현재 RTSP/RTMP/SRT publisher.Close가 취소만 하므로 새 순환 대기를 만들지 않는 것으로 확인됐다. inbound reader join을 Pion GracefulClose 뒤에 둔 순서도 타당하다. 실제 RTSP path 종료, RTP callback 진행 중 close, PLI 대기 중 close 검사는 여전히 필요하다.

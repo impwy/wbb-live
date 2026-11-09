@@ -24,3 +24,7 @@
 3. session.Close를동기join으로바꾸면path이벤트루프의publisher교체가RemovePublisher응답을기다리는세션과교착할수있다. 취소요청과완료관찰을분리하고교체경합을검사한다.
 
 Connected/Failed의단순상태관찰goroutine은미디어/생성/자원보유효과가없음을검토하여계약의관찰자범위를구분할수있다. RTP/RTCP쓰기,ICE재시작,경로/stream정리는실제효과가있으므로완료근거에포함한다.
+
+## 초기 구현 중간 지적
+
+`internal/wbbcompletion/registry.go` 초기후보는epoch를이력길이+1인숫자로만표현하고과거epoch완료도숫자범위로판정한다. ADR의무작위epoch_id와연속sequence분리계약을충족하지않는다. 새저장소에같은slot을명시bootstrap하면과거epoch값과충돌할수있고,내부Root는외부tuple에포함되지않는다. 무작위ID를영속화하고서명·조회·종료가정확한epoch ID를사용하도록수정요청했다. 최종patch검토전중간후보에대한지적이다.

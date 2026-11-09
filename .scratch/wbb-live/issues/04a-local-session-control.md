@@ -1,6 +1,6 @@
 # 04-A: 로컬 방송 준비·취소와 영속 상태
 
-**Status:** in-progress
+**Status:** done
 **Blocked by:** 01(done). 사용자 승인으로02 실제 인수 전 로컬 구현 가능.
 **상위:** 04-secure-pc-live. 지정 대체 Codex 단독 구현, 조정 Codex 독립 리뷰.
 
@@ -19,3 +19,7 @@
 ## 완료 기준과 검사
 
 공개 HTTP+실제 PostgreSQL로 익명401/타인403/없는 방송404, 멱등 동일 키·다른 입력409·다른 family403, 동시 시작/삭제, 활성 삭제409, grant 만료·갱신, 정상 refresh, 로그아웃/재사용 폐기, 준비60초 초과 및 API/DB 재시작 영속성을 확인한다. STOPPING을 건너뛰어 미해결 자원을 종료로 확정하지 않는다. 공개 응답/로그에 자격·내부 주소가 없는지 확인한다. Flutter 사용자 동작 검사, analyze/test/web build, Go vet/race 검사를 수행한다. 실패→수정→통과 근거와 변경 목록·자원·잔여 문제를 보고하고 편집 중단 후 독립 리뷰를 받는다. 실제 미디어·실기기·외부망 인수는 이 단계 완료로 주장하지 않는다.
+
+## 결과
+
+지정 대체 Codex 구현 및 두 축 독립 리뷰 완료. 독립 Go race/vet, Flutter36개/analyze/Web 빌드, 별도 실행 API+실제 PostgreSQL/Redis17개 검사를 통과했다. 실제 API/DB 재시작과 Redis 장애 중 실제 준비 제한 만료도 확인했다. 상세는 `docs/reviews/04a-local-session-control.md`, `docs/verification/04a-local-session-control.md`.04-B 미디어 송출·LIVE·시청과 실제 기기 인수는 미완료다.

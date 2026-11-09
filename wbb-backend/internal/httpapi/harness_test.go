@@ -162,9 +162,10 @@ func redactPGError(err error) error {
 
 type testServer struct {
 	*httptest.Server
-	cfg  config.Config
-	api  *httpapi.Server
-	logs *bytes.Buffer
+	cfg             config.Config
+	api             *httpapi.Server
+	logs            *bytes.Buffer
+	stopMaintenance context.CancelFunc
 }
 
 type serverOpt func(*config.Config)
@@ -254,6 +255,9 @@ func newTestServerWithGoogle(t *testing.T, googleClient *http.Client, opts ...se
 	bcastSvc := broadcasts.NewService(testPool)
 	logs := new(bytes.Buffer)
 	api := httpapi.NewServer(cfg, authSvc, bcastSvc, rdb, testPool, slog.New(slog.NewJSONHandler(logs, nil)))
+	maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
+	t.Cleanup(stopMaintenance)
+	go api.RunMaintenance(maintenanceCtx)
 	if googleClient != nil {
 		api.SetGoogleHTTPClient(googleClient)
 	}
@@ -261,7 +265,7 @@ func newTestServerWithGoogle(t *testing.T, googleClient *http.Client, opts ...se
 	ts.Listener = listener
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return &testServer{Server: ts, cfg: cfg, api: api, logs: logs}
+	return &testServer{Server: ts, cfg: cfg, api: api, logs: logs, stopMaintenance: stopMaintenance}
 }
 
 // freezeRateClock pins the rate-limit window clock mid-window so fixed-window

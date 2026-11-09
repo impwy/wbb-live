@@ -13,7 +13,7 @@ import (
 // as a publish grant and vice versa.
 const (
 	AudienceAPI     = "wbb-api"
-	AudiencePublish = "wbb-publish" // used by the media/WHIP step, not issued yet
+	AudiencePublish = "wbb-publish"
 	issuer          = "wbb"
 )
 
@@ -27,6 +27,16 @@ type AccessClaims struct {
 	jwt.RegisteredClaims
 	SessionID string `json:"sid"`
 	FamilyID  string `json:"fid"`
+}
+
+// PublishClaims are deliberately distinct from login claims. 04-A issues
+// grants for a prepared session; no media endpoint consumes them yet.
+type PublishClaims struct {
+	jwt.RegisteredClaims
+	BroadcastID string `json:"bid"`
+	SessionID   string `json:"bsid"`
+	FamilyID    string `json:"fid"`
+	Generation  int64  `json:"generation"`
 }
 
 // TokenManager signs and verifies access JWTs with a fixed algorithm
@@ -86,4 +96,20 @@ func (m *TokenManager) VerifyAccess(token string) (*AccessClaims, error) {
 		return nil, ErrTokenInvalid
 	}
 	return claims, nil
+}
+
+// IssuePublish signs fixed database claims. Reissuing the same jti and times
+// during an idempotent replay cannot extend the grant's lifetime.
+func (m *TokenManager) IssuePublish(userID, broadcastID, sessionID, familyID, jti string, generation int64, issuedAt, expiresAt time.Time) (string, error) {
+	claims := PublishClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject: userID, Issuer: issuer,
+			Audience:  jwt.ClaimStrings{AudiencePublish},
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ExpiresAt: jwt.NewNumericDate(expiresAt), ID: jti,
+		},
+		BroadcastID: broadcastID, SessionID: sessionID,
+		FamilyID: familyID, Generation: generation,
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
 }

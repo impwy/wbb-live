@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../config.dart';
 import '../models/broadcast.dart';
+import '../models/live_session.dart';
 import '../models/user.dart';
 import 'http_client.dart';
 
@@ -61,9 +62,11 @@ class ApiClient {
     Object? body,
     bool auth = false,
     bool allowRefreshRetry = true,
+    Map<String, String>? headers,
   }) async {
     final uri = Uri.parse('$_baseUrl$path');
     final request = http.Request(method, uri);
+    if (headers != null) request.headers.addAll(headers);
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
       request.body = jsonEncode(body);
@@ -88,7 +91,7 @@ class ApiClient {
     if (response.statusCode == 401 && auth && allowRefreshRetry && _accessToken != null) {
       final refreshed = await refresh();
       _accessToken = refreshed.accessToken;
-      return _request(method, path, body: body, auth: auth, allowRefreshRetry: false);
+      return _request(method, path, body: body, auth: auth, allowRefreshRetry: false, headers: headers);
     }
 
     if (response.statusCode == 204 || response.body.isEmpty) {
@@ -239,5 +242,23 @@ class ApiClient {
 
   Future<void> deleteBroadcast(String id, {required int version}) async {
     await _request('DELETE', '/broadcasts/$id?version=$version', auth: true);
+  }
+
+  /// Prepares only a session; no capture or LIVE state is implied.
+  Future<LiveSession> prepareSession(String broadcastId, {required String source, required String idempotencyKey}) async {
+    final data = await _request('POST', '/broadcasts/$broadcastId/sessions',
+        body: {'source': source}, auth: true, headers: {'Idempotency-Key': idempotencyKey});
+    return LiveSession.fromJson(data['session'] as Map<String, dynamic>);
+  }
+
+  Future<LiveSession?> currentSession(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/sessions/current');
+    final value = data['session'];
+    return value == null ? null : LiveSession.fromJson(value as Map<String, dynamic>);
+  }
+
+  Future<LiveSession> cancelSession(String broadcastId, String sessionId) async {
+    final data = await _request('POST', '/broadcasts/$broadcastId/sessions/$sessionId/stop', auth: true);
+    return LiveSession.fromJson(data['session'] as Map<String, dynamic>);
   }
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
 	"github.com/impwy/wbb-live/wbb-backend/internal/config"
+	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
 	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	cfg          config.Config
 	auth         *auth.Service
 	broadcasts   *broadcasts.Service
+	sessions     *livesessions.Service
 	redis        redis.UniversalClient
 	db           *pgxpool.Pool
 	log          *slog.Logger
@@ -40,8 +42,17 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: livesessions.NewService(dbPool, auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)), redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
+
+// RunMaintenance reconciles durable preparation timeouts independently of
+// public reads and Redis. The caller owns cancellation on server shutdown.
+func (s *Server) RunMaintenance(ctx context.Context) {
+	s.sessions.RunMaintenance(ctx, func(err error) { s.log.Error("session maintenance", "error", err) })
+}
+
+// SetSessionClock is an integration-test clock seam; production never calls it.
+func (s *Server) SetSessionClock(now func() time.Time) { s.sessions.SetClock(now) }
 
 // SetGoogleHTTPClient changes only the outbound transport, for integration
 // tests of Google's fixed endpoints. Production configuration cannot change
@@ -76,6 +87,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}", s.handleGetBroadcast)
 	mux.HandleFunc("PATCH /api/v1/broadcasts/{id}", s.requireAuth(s.handleUpdateBroadcast))
 	mux.HandleFunc("DELETE /api/v1/broadcasts/{id}", s.requireAuth(s.handleDeleteBroadcast))
+	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions", s.requireAuth(requireOrigin(s, s.handleStartSession)))
+	mux.HandleFunc("GET /api/v1/broadcasts/{id}/sessions/current", s.handleCurrentSession)
+	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/stop", s.requireAuth(requireOrigin(s, s.handleStopSession)))
+	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/publish-grants", s.requireAuth(requireOrigin(s, s.handleRenewGrant)))
 
 	var root http.Handler
 	if s.cfg.StaticDir != "" {

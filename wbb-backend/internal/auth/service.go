@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -344,7 +345,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (User, Sessi
 		return User{}, Session{}, ErrSessionRevoked
 	}
 	if now.After(expires) {
-		_ = s.revokeFamily(ctx, familyID, "expired")
+		if err := s.revokeFamily(ctx, familyID, "expired"); err != nil {
+			return User{}, Session{}, err
+		}
 		return User{}, Session{}, ErrUnauthorized
 	}
 
@@ -395,10 +398,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (User, Sessi
 		// the replay exactly like reuse — revoke the family ledger row in this
 		// transaction (we hold the family lock, so the revocation can never
 		// miss the winner's freshly inserted session) and commit before failing.
-		if _, err := tx.Exec(ctx,
-			`UPDATE auth_session_families
-			 SET revoked_at = COALESCE(revoked_at, $2), revoked_reason = COALESCE(revoked_reason, 'reuse')
-			 WHERE id = $1`, familyID, now); err != nil {
+		if err := revokeFamilyTx(ctx, tx, familyID, now, "reuse"); err != nil {
 			return User{}, Session{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -500,8 +500,8 @@ func (s *Service) VerifyRequest(ctx context.Context, accessToken string) (User, 
 		 FROM auth_sessions s
 		 JOIN auth_session_families f ON f.id = s.refresh_family_id
 		 JOIN users u ON u.id = s.user_id
-		 WHERE s.id = $1`,
-		claims.SessionID,
+		 WHERE s.id = $1 AND s.refresh_family_id = $2`,
+		claims.SessionID, claims.FamilyID,
 	).Scan(&userID, &sessionExpires, &sessionRevokedAt, &familyRevokedAt, &email, &display)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUnauthorized
@@ -523,6 +523,16 @@ func (s *Service) VerifyRequest(ctx context.Context, accessToken string) (User, 
 		}
 	}
 	return User{ID: userID, Email: email, DisplayName: display}, nil
+}
+
+// AccessIdentity returns signed identifiers after VerifyRequest has checked
+// the active ledger. Mutating session operations recheck the family under lock.
+func (s *Service) AccessIdentity(token string) (sessionID, familyID string, err error) {
+	claims, err := s.tokens.VerifyAccess(token)
+	if err != nil {
+		return "", "", ErrUnauthorized
+	}
+	return claims.SessionID, claims.FamilyID, nil
 }
 
 // recoverSessionCache repopulates the active-sid cache while holding the
@@ -639,23 +649,69 @@ func (s *Service) cacheActiveSession(ctx context.Context, familyID, sessionID st
 // cache delete fails, VerifyRequest rejects via the ledger.
 func (s *Service) revokeFamily(ctx context.Context, familyID, reason string) error {
 	now := s.now()
-	_, err := s.db.Exec(ctx,
-		`UPDATE auth_session_families
-		 SET revoked_at = COALESCE(revoked_at, $2), revoked_reason = COALESCE(revoked_reason, $3)
-		 WHERE id = $1`,
-		familyID, now, reason,
-	)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	// Audit bookkeeping; the ledger row above is what authorization checks.
-	_, _ = s.db.Exec(ctx,
-		`UPDATE auth_sessions
-		 SET revoked_at = COALESCE(revoked_at, $2), revoked_reason = COALESCE(revoked_reason, $3)
-		 WHERE refresh_family_id = $1`,
-		familyID, now, reason,
-	)
-	s.rdb.Del(ctx, sessionKey(familyID))
+	defer tx.Rollback(ctx)
+	var revoked *time.Time
+	err = tx.QueryRow(ctx, `SELECT revoked_at FROM auth_session_families WHERE id=$1 FOR UPDATE`, familyID).Scan(&revoked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := revokeFamilyTx(ctx, tx, familyID, now, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	// Cache is advisory; a failed deletion cannot reauthorize the DB ledger.
+	_ = s.rdb.Del(ctx, sessionKey(familyID)).Err()
+	return nil
+}
+
+// revokeFamilyTx also serves the concurrent-refresh reuse branch. Callers
+// hold the family row lock before mutating any live session.
+func revokeFamilyTx(ctx context.Context, tx pgx.Tx, familyID string, now time.Time, reason string) error {
+	if _, err := tx.Exec(ctx, `UPDATE auth_session_families SET revoked_at=COALESCE(revoked_at,$2),revoked_reason=COALESCE(revoked_reason,$3) WHERE id=$1`, familyID, now, reason); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,$2),revoked_reason=COALESCE(revoked_reason,$3) WHERE refresh_family_id=$1`, familyID, now, reason); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `UPDATE broadcast_sessions SET state='stopping',version=version+1,end_reason=$2 WHERE publisher_auth_family_id=$1 AND state IN ('starting','live') RETURNING id::text,broadcast_id::text,version`, familyID, reason)
+	if err != nil {
+		return err
+	}
+	type changed struct {
+		id, bid string
+		version int64
+	}
+	var changes []changed
+	for rows.Next() {
+		var c changed
+		if err = rows.Scan(&c.id, &c.bid, &c.version); err != nil {
+			rows.Close()
+			return err
+		}
+		changes = append(changes, c)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, c := range changes {
+		if _, err = tx.Exec(ctx, `UPDATE publish_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE broadcast_session_id=$1`, c.id, now); err != nil {
+			return err
+		}
+		if err = db.RecordSessionEvent(ctx, tx, c.bid, c.id, "stopping", c.version); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

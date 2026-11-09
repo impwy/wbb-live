@@ -188,6 +188,8 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
       'live' => ('LIVE', Colors.red),
+      'starting' => ('준비 중', Colors.orange),
+      'stopping' => ('종료 중', Colors.orange),
       'ended' => ('종료', Colors.grey),
       _ => ('대기', Colors.blueGrey),
     };

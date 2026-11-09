@@ -129,7 +129,7 @@ WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 �
 
 ## 7. WHIP 인증과 브라우저 캡처
 
-publish grant는 로그인 JWT와 별개이며 `aud=publish`, 고유 jti, 회차·방송자·로그인 family·generation에 묶인 단기 일회성 자격이다. TTL은 §6을 따른다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 family 활성 상태·owner·회차 상태를 확인하고 생성 작업을 예약한다. family 활성은 DB에서 family가 미폐기이며 그 family에 현재 비폐기·미만료 auth session이 존재하는 것으로 판정한다. 최초 sid의 만료로 정상 회전 후 권한을 끊지 않는다. 생성한 resource는 서버에 owner·family·회차·generation으로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
+publish grant는 로그인 JWT와 별개이며 `aud=wbb-publish`, 고유 jti, 회차·방송자·로그인 family·generation에 묶인 단기 일회성 자격이다. TTL은 §6을 따른다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 family 활성 상태·owner·회차 상태를 확인하고 생성 작업을 예약한다. family 활성은 DB에서 family가 미폐기이며 그 family에 현재 비폐기·미만료 auth session이 존재하는 것으로 판정한다. 최초 sid의 만료로 정상 회전 후 권한을 끊지 않는다. 생성한 resource는 서버에 owner·family·회차·generation으로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
 
 MediaMTX ingress endpoint는 외부 직접 노출하지 않는다. 외부 인증 콜백을 통해 회차의 활성 여부를 재검사하고 두 번째 publisher가 첫 publisher를 교체하지 못하게 설정한다. FFmpeg의 내부 read/publish 자격과 브라우저 grant는 분리하고 최종 rendition 경로에 브라우저가 직접 publish하지 못하게 한다. 버전별 WHIP Location/PATCH/DELETE와 MediaMTX 연결 종료 API 지원은 02번 검증에서 확인하고 어댑터에 가둔다. 외부 HTTP 인증의 action/path 검사는 [MediaMTX 인증 문서](https://mediamtx.org/docs/features/authentication)를 기준으로 한다(2026-11-06 확인).
 

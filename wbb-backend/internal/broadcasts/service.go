@@ -31,6 +31,7 @@ var (
 	ErrForbidden = errors.New("not the broadcast owner")
 	// ErrVersionConflict reports a stale version on update/delete.
 	ErrVersionConflict = errors.New("version conflict")
+	ErrActiveSession   = errors.New("broadcast has an active session")
 )
 
 // InvalidInputError reports a request validation failure for one field.
@@ -120,8 +121,9 @@ func (s *Service) Create(ctx context.Context, ownerID, title, description string
 func (s *Service) Get(ctx context.Context, id string) (Broadcast, error) {
 	return s.queryOne(ctx,
 		`SELECT b.id, b.owner_id, b.title, b.description, b.version, b.created_at, b.updated_at,
-		        u.id, u.display_name
+		        u.id, u.display_name, COALESCE(latest.state, 'ready'), latest.id::text
 		 FROM broadcasts b JOIN users u ON u.id = b.owner_id
+		 LEFT JOIN LATERAL (SELECT id,state FROM broadcast_sessions WHERE broadcast_id=b.id ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
 		 WHERE b.id = $1 AND b.deleted_at IS NULL`,
 		id,
 	)
@@ -160,8 +162,9 @@ func (s *Service) List(ctx context.Context, statusFilter, cursor string, limit i
 
 	rows, err := s.db.Query(ctx, `
 		SELECT b.id, b.owner_id, b.title, b.description, b.version, b.created_at, b.updated_at,
-		       u.id, u.display_name
+		       u.id, u.display_name, COALESCE(latest.state, 'ready'), latest.id::text
 		FROM broadcasts b JOIN users u ON u.id = b.owner_id
+		LEFT JOIN LATERAL (SELECT id,state FROM broadcast_sessions WHERE broadcast_id=b.id ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
 		WHERE `+where+`
 		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -238,10 +241,34 @@ func (s *Service) Update(ctx context.Context, actorID, id string, version int64,
 // Delete soft-deletes a broadcast as the owner. version must match. Once
 // media sessions exist, an active session will block deletion with 409.
 func (s *Service) Delete(ctx context.Context, actorID, id string, version int64) error {
-	if err := s.checkOwner(ctx, actorID, id, &version); err != nil {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	ct, err := s.db.Exec(ctx,
+	defer tx.Rollback(ctx)
+	var owner string
+	var storedVersion int64
+	err = tx.QueryRow(ctx, `SELECT owner_id::text,version FROM broadcasts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&owner, &storedVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if owner != actorID {
+		return ErrForbidden
+	}
+	if storedVersion != version {
+		return ErrVersionConflict
+	}
+	var active bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM broadcast_sessions WHERE broadcast_id=$1 AND state IN ('starting','live','stopping'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return ErrActiveSession
+	}
+	ct, err := tx.Exec(ctx,
 		`UPDATE broadcasts SET deleted_at = now(), version = version + 1, updated_at = now()
 		 WHERE id = $1 AND version = $2 AND deleted_at IS NULL`,
 		id, version,
@@ -252,7 +279,7 @@ func (s *Service) Delete(ctx context.Context, actorID, id string, version int64)
 	if ct.RowsAffected() != 1 {
 		return ErrVersionConflict
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) checkOwner(ctx context.Context, actorID, id string, version *int64) error {
@@ -294,7 +321,7 @@ func scanBroadcast(row rowScanner) (Broadcast, error) {
 	b.Status = StatusReady
 	err := row.Scan(
 		&b.ID, &b.OwnerID, &b.Title, &b.Description, &b.Version, &b.CreatedAt, &b.UpdatedAt,
-		&b.Owner.ID, &b.Owner.DisplayName,
+		&b.Owner.ID, &b.Owner.DisplayName, &b.Status, &b.CurrentSessionID,
 	)
 	b.OwnerID = b.Owner.ID
 	return b, err

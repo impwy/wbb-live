@@ -46,3 +46,13 @@ RTSP 범위 보완안은 source 읽기·720p 출력 발행을 HTTP 인증의 프
 장벽 초안은 작업 context 취소 시 자동 해제되어 취소 후에도 멈춘 실행이 남는 경합을 재현하지 못한다. 등록 이후 장벽에 작업 취소와 독립적인 실험 hold/release를 추가하도록 요청했다. 등록 전 close의 completed는 이후 Begin을 막는 표식이 근거이며, 이미 등록된 실행의 closing 유지와 구분한다. 인증 중 장벽과 실제 완료 응답 유실 검사도 남아 있다.
 
 수정된 hold 장벽의 AbortBarriers는 abort 채널을 닫은 뒤 nil로 바꾸지만 gates는 남겼다. 종료 중 그 이후 진입한 WaitBarrier가 미해제 gate와 nil 채널을 기다려 멈출 수 있어 수정 요청했다. 닫힌 채널을 보존하거나 abort 상태에서 신규 Wait/Arm을 거절하고, abort 이후 신규 대기 및 동시 진입 회귀가 필요하다.
+
+## 요청 취소와 실행 인계의 추가 경합
+
+새 newSession 구현은 서버가 요청을 받은 뒤에도 HTTP context 취소로 반환한다. 서버가 IsClosing=false 확인 뒤 멈춘 동안 handler가 CloseOperation/DoneCreation을 실행하면 refs=0으로 completed가 될 수 있고, 이후 서버가 AttachSession을 수행하여 이미 완료된 작업에 실행이 추가된다. accept된 서버 작업의 별도 참조를 유지하거나 서버 응답까지 handler의 실행 소유권을 유지해야 한다. IsClosing 확인과 세션 등록 사이 장벽에서 요청 취소·close·상태 역행 여부를 검증하도록 전달했다.
+
+## 중간 인증 경계 리뷰
+
+별도 읽기 전용 리뷰에서 publish HMAC의 purpose/root/slot/epoch/operation/path/SDP 결합과 관리 API 설정 변경 차단에 새로운 확정 우회는 발견하지 못했다. RTSP 경로별 HTTP 인증 harness는 아직 구현·실행 전이므로 보호 완료로 보지 않는다.
+
+실험 장벽의 arm/release/query 서명은 현재 epoch 대신 stage만 포함하여 같은 root/slot의 다음 실행에서 이전 서명을 재생할 수 있었다. 제품 종료 계약 우회와 구분되는 실험 결함이며, 현재 epoch와 stage를 각각 서명에 포함하고 과거 실행 서명을 거절하도록 보완 요청했다.

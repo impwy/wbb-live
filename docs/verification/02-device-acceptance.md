@@ -72,3 +72,13 @@
 이 실행은 relay가 Authorization/Origin/cookie를 대신 주입하는 검사와 별개다. 사용자 실제 화면·마이크·아이폰 결과를 대신하지 않는다. 기존 수동 검증 스택을 보존하기 위해 원래 CPU83 전체 검사를 재실행하지 않았다. 새 구성의 VAAPI 실행도 이번 결과에 포함하지 않는다. HTTP 인증 우회 입력 및 LL-HLS blocking query 전체 행렬을 모두 수행했다고 주장하지 않는다.
 
 공개 환경은 운영 이미지와 전체 Caddy 설정 사본을 동일 /etc/caddy 위치로 마운트하고 포트 공개 없이 adapt/validate를 통과했다. 임시 Basic Auth와 독립 live host를 포함했으며 사본·자격은 비공개로 보존한다. 운영 파일/reload/DNS/방화벽은 아직 변경하지 않았다. [외부망 적용 계획](02-device-external-plan.md)을 따른다.
+
+## 공개 HTTPS 적용 관측
+
+- 사용자가 live A 레코드를 DNS only로 변경했다. 실제 DNS와 공인 신뢰 인증서를 확인했다. 실제 origin IP와 임시 자격은 공개 문서에 기록하지 않는다.
+- 서버에는 별도 wbb-media-acceptance CPU720p 미디어 프로젝트와 live 전용 Caddy 파일만 적용했다. 운영 Caddy는 기존 컨테이너를 reload했다.
+- 공개 HTTP 경계8/8 통과: UI/HLS/WHIP 미인증401, 인증 UI200, 잘못된/누락 WHIP Origin403, 허용 Origin의 실제 MediaMTX 도달400, 관리 API404.
+- 서버 내부 ICE/TCP18391은 정상 연결되나 다른 인터넷 회선의 Mac에서는 미도달. 공유기 포트 전달/방화벽을 확인 중이다. 신호 HTTP 성공을 외부 송출 성공으로 기록하지 않는다.
+- 아이폰 Chrome 실제 캡처·청취 결과는 아직 없다.
+
+공개 적용 후 기존 Caddy 파일의 모든 해시 및 기존 실행 컨테이너 식별자 보존을 확인했다. PR4의 backend/frontend CI도 통과했다. 서버 공유기 관리 포트로 향하는 loopback 전용 SSH 터널을 준비했고 사용자 로그인 진행을 기다린다. 관리 화면의 인터넷 공개나 기존 관리자 자격 변경은 하지 않았다.

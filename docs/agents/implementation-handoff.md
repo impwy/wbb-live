@@ -4,6 +4,11 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 07-C outbox 전달 구현 인계
+
+05-A 제품d762510을 [Draft PR8](https://github.com/impwy/wbb-live/pull/8)(base work/flutter-live)에 게시했다. 새work/outbox-delivery에서 지정 대체 Codex가07c-outbox-delivery.md를 단독 구현한다. 기존상태/outbox 원자저장 위에 Kafka 전달·재시도·운영 재처리를 연결한다. unknownPOST/인박스소비/실제기기 관문을 완료로 간주하지 않는다. 구현 전짧은 claim/ack/실패계약을보고하고 승인범위안에서진행한다. 기존8090와전용미디어스택을보존하고활성0확인후전용자원만사용한다. 조정자는독립리뷰/검증을담당한다.
+
+
 ### 최신: 05-A 로컬 독립 검증 완료
 
 조정자가 정상 카메라와 합성 숨김 종료를 별도 Chrome 프로세스로 독립 검증했다. H264/Opus·익명 음성/영상·pause·playback409/HLS403·이전grant409·정확한ended·실제자원부재를 확인했다. 제품/검증기 해시는 인계 후 불변이며 전용활성0/기존8090 HTTP200이다. analyze0·전체58 후 추가publisher8·최종JS7·릴리스빌드도 통과했다. 지정 구현자는 편집 중단·대기이며 조정자가 문서와PR게시를 담당한다. 실제iPhone/외부망/Google/unknownPOST/ABR는 미완료다.

@@ -2,11 +2,11 @@
 
 **What to build:** 방송자가 탭을 닫거나 API·worker·미디어·Kafka가 재시작되어도 시청자는 실제 상태를 보고, 종료 작업은 중복 없이 끝난다.
 
-**Blocked by:** 04 인증된 PC 라이브.
+**Blocked by:** 04-B1/04-B2 정상·권한·종료 인터페이스의 로컬 독립 검증(완료). 실제 기기 인수는 별도 관문이다.
 
 **Status:** ready-for-agent
 
-**실행 가능 여부:** 선행 미완료로 blocked.
+**실행 가능 여부:** 로컬 설계·구현 가능. 05-A 로컬 구현·독립 검증 후07-C outbox 전달부터 지정 단독 구현자에게 인계한다. unknown POST 회수 설계는 별도로 유지한다.04-B의 unknown POST 회수를 이 티켓이 담당하므로04-B 전체 완료를 다시 선행 조건으로 요구하지 않는다.
 
 - [ ] 상태와 outbox를 DB 트랜잭션으로 쓰고 Kafka의 중복·역순 소비를 inbox와 version으로 무해하게 처리한다.
 - [ ] Kafka 중단 중에도 종료 권한 차단·미디어 종료가 수행되며 재개 후 outbox를 재처리한다.
@@ -35,3 +35,18 @@ WHIP POST를 전송했으나 자원 주소를 얻지 못한 작업은 시간 경
 고정 MediaMTX v1.21.3의 GET /v3/info는 프로세스 초기화 때 한 번 생성되는 started 값을 제공한다([core.go](https://github.com/bluenviron/mediamtx/blob/v1.21.3/internal/core/core.go#L50), [API](https://github.com/bluenviron/mediamtx/blob/v1.21.3/internal/api/api.go#L386-L390)). 별도UUID도구를 먼저 만들기보다 이 기존 API의 실제 값을 독립 확인한다.
 
 단순 started 변경만으로 이전 실행 종료를 추론하지 않는다. 대상 인스턴스/실행 슬롯과 생성 작업 귀속을 영속 저장하고, info=A 조회 뒤 POST가 B에 도착하는 경합을 생성 자격/인증 fencing으로 차단해야 한다. Compose 동일 실행 슬롯의 자연 재시작과 컨테이너 교체/복제는 구분한다. k3s의 Service 로드밸런싱·rolling overlap·강제삭제·노드단절에서는 이전 실행 종료 증거가 별도로 필요하다. 이 설계는 후보이며 실제 구현·검증 전이다. 전역 재시작이나 Docker socket 노출을 요구하지 않는다.
+
+
+## 로컬 구현 단계 검토
+
+현재 코드에는 상태와 outbox의 원자 기록(`internal/platform/db/session_events.go`), 준비/ingress 감시와 lease, 실제 자원 종료 확인(`internal/mediaworker/worker.go`)이 있다. 이를 중복 구현하지 않고 다음 경계를 완성한다. 경로는wbb-backend 기준이며 아래는 계획이다.
+
+1. **생성 작업 귀속과 종료 근거:** `internal/livesessions/publish.go`의 생성 예약·전송 표시에 실행 슬롯/incarnation 귀속이 없고 `internal/httpapi/media_auth.go`도 그 귀속을 인증하지 않는다. info=A 조회 후 POST가B에 도착하는 경합을 먼저 해결한다. 실제 응답 유실/API 종료, A→B 경합, 실행 교체/중첩을 검증한다. 기존 주소 없는 작업에 나중에 관측한started를 소급 대입하지 않는다.
+2. **증명된 과거 작업 회수:** 현재worker가 주소 없는 전송 작업을 미해결로 남기는 안전성을 보존한다. 독립적인 상류 실행 종료 근거·생성 권한 폐기·새 자원 조회·변환 종료를 모두 확인한 정확한 작업/회차/generation만 종결한다. 늦은201·중복 복구·새 회차와의 경합을 검증하고, 별도 정상 방송의 ingress/PID/재생 유지를 확인한다. 전역 재시작이나Docker socket을 복구 수단으로 강제하지 않는다. 근거가 없으면STOPPING을 유지한다.
+3. **outbox 전달:** 기존 이벤트 저장 위에 설계§9의topic/key/envelope를 따르는Kafka 발행·재시도를 연결한다. broker 확인 후DB 마킹 전 종료는 동일event_id 중복 발행으로 처리한다. 실제Kafka 중단 중에도 종료 권한 차단/미디어 종료가 작동하고, 재개 후 누락 없는 전달·오래된 미발행 탐지·격리/재처리를 확인한다.
+4. **inbox와 재조정:** 이벤트를 즉시LIVE/ENDED 명령으로 적용하지 않는다. 현재DB 상태와 실제미디어를 다시 확인하는 기존 조정 경계를 사용한다. inbox와 소비DB 변경의 원자성, 회차별version, 중복·역순·과거 회차가 새 방송에 영향을 주지 않음을 검증한다. Kafka 없이도 주기 감시가 유지되어야 한다.
+
+실제PostgreSQL/MediaMTX/FFmpeg/Kafka 장애 시험은 모의 장애와 구분한다. 실제 두 물리 기기·외부망·VAAPI/ABR 인수는 이 로컬 단계로 대체하지 않는다. 설계 조사만 완료했으며 위 단계의 구현·검증 완료를 의미하지 않는다.
+
+
+현재실행: 07c-outbox-delivery.md. 기존상태감시를중복구현하지않고이벤트전달을완성한다. unknown생성작업회수와inbox소비는미완료다.

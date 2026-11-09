@@ -27,3 +27,5 @@ known/unknown 모두정확한과거생성작업의완료를증명한뒤에만clo
 ## 다음 실행 범위
 
 제품 교체 전 `07a1-media-completion-spike.md`의 격리 Linux 스파이크로 ADR0001 계약을 증명한다.07-C 동결 후 지정 단독 구현자에게 인계하며, 스파이크 완료와 제품 통합 완료를 구분한다.
+
+제품 통합 초안은 `07a2-media-completion-integration.md`에 분리했다. DELETE 응답 기반 CloseResource와 stop/dispatch 직렬화까지 포함하며, 07-A1 완료·ADR 채택 전 구현하지 않는다.

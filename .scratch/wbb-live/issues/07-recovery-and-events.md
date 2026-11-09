@@ -50,3 +50,13 @@ WHIP POST를 전송했으나 자원 주소를 얻지 못한 작업은 시간 경
 
 
 현재실행: 07c-outbox-delivery.md. 기존상태감시를중복구현하지않고이벤트전달을완성한다. unknown생성작업회수와inbox소비는미완료다.
+
+
+### callback UUID만으로 종결할 수 없는 근거
+
+고정MediaMTX v1.21.3 공식소스 읽기전용 조사 결과다. 실제장애재현과 구분한다. publish auth callback의 UUID를 허용 전에 영속 기록하면 정확한 세션을 추적할 수 있지만 Location의 secret과는 달라 WHIP DELETE 주소를 복원하지 못한다. 관리 kick은 map 삭제 후 context 취소만 하고 종료 goroutine을 기다리지 않는다([server.go](https://github.com/bluenviron/mediamtx/blob/v1.21.3/internal/servers/webrtc/server.go#L467), [Close](https://github.com/bluenviron/mediamtx/blob/v1.21.3/internal/servers/webrtc/session.go#L299)).
+
+구체적인 반례: ToStream 성공 직후 지연→kick/map삭제/관측부재→재개한 goroutine이 context 확인 없이 SkipAuth로 AddPublisher→이후취소를읽고정리할 수 있다([session.go](https://github.com/bluenviron/mediamtx/blob/v1.21.3/internal/servers/webrtc/session.go#L498)). 따라서 정확한UUID의404와당시path부재도향후늦은등록불가의증거가아니다. callback UUID 영속화는추적개선후보이지unknown종결구현의대체물이아니다. 독립실행종료증거 또는 동등한완료증명계약이없으면STOPPING을보존한다.
+
+
+known Location 경로도강제삭제후5초부재만으로늦은생성불가능을증명하지못하는공통경합을발견했다. 07a-media-completion-evidence.md에근거와완료기준을분리했다. 정상실행검증성공을모든경합보장으로확대하지않는다.

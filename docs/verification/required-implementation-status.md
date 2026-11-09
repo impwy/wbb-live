@@ -2,7 +2,7 @@
 
 판정 기준은 `requirements/01-contest-requirements.md`와 `requirements/02-acceptance-tests.md`다. 사용자의 목표는 모든 필수 기능 구현이며, 일부 티켓·합성 테스트 통과로 전체 완료를 대신하지 않는다. 구현과 실제 기기 인수는 별도로 기록한다.
 
-현재 확인 기준:04-B1 서버 제품107cdd8 및 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)의 backend/frontend CI 통과. 서버 정상 미디어·권한·종료·장애 경계의 독립 검증과 두 축 리뷰를 마쳤다. 상세 근거는 [04-B 검증 기록](04b-local-secure-media.md)을 따른다.04-B2 Flutter PC 송출·익명 시청은 work/flutter-live에서 독립 analyze0·Flutter53개·JS3개·릴리스 빌드·두 Chrome 제품 UI 검증과 두 축 리뷰를 통과했다. [04-B2 근거](04b2-flutter-live.md)를 따른다. 05-A 카메라·마이크 제품 통합도 정상/합성숨김 종료의 독립 Chrome 검증을 통과했다. [05-A 근거](05a-mobile-single-rendition.md)를 따른다. 실제 기기 인수는 미완료다.
+현재 확인 기준:04-B1 서버 제품107cdd8 및 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)의 backend/frontend CI 통과. 서버 정상 미디어·권한·종료·장애 경계의 독립 검증과 두 축 리뷰를 마쳤다. 상세 근거는 [04-B 검증 기록](04b-local-secure-media.md)을 따른다.04-B2 Flutter PC 송출·익명 시청은 work/flutter-live에서 독립 analyze0·Flutter53개·JS3개·릴리스 빌드·두 Chrome 제품 UI 검증과 두 축 리뷰를 통과했다. [04-B2 근거](04b2-flutter-live.md)를 따른다. 05-A 제품d762510과 Draft PR8의 backend/frontend CI가 통과했다. 카메라·마이크 제품 통합도 정상/합성숨김 종료의 독립 Chrome 검증을 통과했다. [05-A 근거](05a-mobile-single-rendition.md)를 따른다. 실제 기기 인수는 미완료다.
 
 | 요구사항 | 현재 근거 | 남은 구현·검증 |
 | --- | --- | --- |
@@ -16,7 +16,7 @@
 | MOB-03 모바일 시작·종료 | 05-A 정상/합성숨김 종료·권한 실패·늦은 응답·복귀 회귀 검증 | 실제 iPhone 권한·중지·앱 전환·잠금·회선 단절 |
 | BCAST-01 정보 CRUD | 01 HTTP·Flutter·실제DB 검사 완료 | 미디어 통합 후 권한·활성 삭제 거절 회귀 |
 | BCAST-02 목록·상세·다른 기기 시청 | 01 목록·상세,04-A 공개 회차 상태 | 인증 불필요한 실제 PC/모바일 방송 재생 |
-| BCAST-03 LIVE/종료·송출 중단 | 04-B1 미디어 준비 후 LIVE, 실제 송출/변환 종료·이전 URL 차단·pending HLS 종료 검증 | Flutter 상태 연동, 응답 유실로 남은 미해결 생성 작업의 근거 있는 회수(04-B/07) |
+| BCAST-03 LIVE/종료·송출 중단 | 04-B1 미디어 준비 후 LIVE, 실제 송출/변환 종료·이전 URL 차단·pending HLS 종료 검증 | Flutter 상태 연동, known/unknown 생성 작업의 종료 완료 근거와 취소 후 늦은 등록 경합(07-A) |
 | BCAST-04 영속성 | 01 방송 메타데이터,04-A API/DB 재시작·회차 보존 독립 검사 | 미디어 연동 후 재시작·종료 정보 재조회 |
 | AUTH-01 가입·로그인·로그아웃 | 01 구현,06 Google 자동 검사,04-A family 폐기 연동 | 실제 Google 자격 인수 및 미디어와 연결된 전체 회귀 |
 | AUTH-02 공개 조회/시청·로그인 송출 | 04-B1 WHIP 보호·익명 HLS 인가·Redis 장애 경계 검증 | 04-B2 실제 제품 UI 자동 흐름 완료; 실제 기기/외부망 인수 |
@@ -30,7 +30,7 @@
 | 평가용 로그인 | 미완료; 현재 로컬 자체 가입 | 제한된 평가 계정 또는 평가 로그인 기능의 실제 접속·권한 확인 |
 | 실행 환경·환경변수 예시 | 기본 README와 .env.example 있음 | 최종 스택 clean checkout 실행 및 누락 설정 오류 확인 |
 | PC/모바일 확인 절차·지원 환경 | 실험 문서 있음, 제품 절차 미완료 | 최종 제품의 실제 확인 절차와 환경별 결과 |
-| 공개 저장소 | impwy/wbb-live 및 Draft PR1~7 | 최종 코드 게시, 비밀·로컬 원본 경로 검사 |
+| 공개 저장소 | impwy/wbb-live 및 Draft PR1~8 | 최종 코드 게시, 비밀·로컬 원본 경로 검사 |
 | 오픈소스 출처·비밀 보호 | 기본 출처·로컬 번들 라이선스 있음 | 후속 사용 라이브러리 포함, 최종 게시 내용 검사 |
 
 ## 실행 순서와 보류 항목

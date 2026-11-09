@@ -92,7 +92,7 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 | GET /broadcasts/{id}/playback | 공개 | LIVE면200 {sessionId,masterUrl}; 미송출409 |
 | POST /playback-events | 공개, 크기/빈도/필드 제한 | 202 집계용 이벤트 수락 |
 
-방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 외부 JSON 상태값은 `ready`, `starting`, `live`, `stopping`, `ended`로 소문자 직렬화한다. 도메인 상태표의 대문자와 의미는 같다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 회차와 grant는 소유자에게만 보내고 캐시하지 않는다.
+방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 외부 JSON 상태값은 `ready`, `starting`, `live`, `stopping`, `ended`로 소문자 직렬화한다. 도메인 상태표의 대문자와 의미는 같다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 이 생성 응답과 grant는 소유자에게만 보내고 캐시하지 않는다. 공개 현재/최근 회차 조회는 {session: null 또는 {id,broadcastId,state,version,startedAt,endedAt}}만 반환하며 family·grant·미디어 내부 식별자를 포함하지 않는다.
 
 Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저장한다. 같은 키/같은 입력은 동일 회차로 응답하고, 같은 키/다른 입력은409다. 다른 키로 활성 회차를 중복 시작해도409다. 이미 송출 중인 회차에 새 publish grant를 발급해 두 번째 송출자가 기존 연결을 탈취하게 하지 않는다. grant가 만료된 STARTING 회차만 갱신할 수 있다.
 
@@ -197,3 +197,7 @@ DNS는 `live` 하위 도메인의 DNS only로 구성한다. CNAME은 대상 체�
 README에는 서비스 URL, 실제 동작하는 평가 로그인 방법, 런타임·환경변수 예시, 실행·migration·중지·백업 방법, PC/모바일 송출·시청·종료 절차, 검증된 지원 환경, 알려진 제약, OSS 출처를 포함한다. 평가용 계정은 운영자가 별도로 주입하고 개인 자격이나 비밀번호를 저장소에 하드코딩하지 않는다. 미완료·실행 불가 항목은 명시한다.
 
 설계 변경은 근거·영향을 ADR로 남긴다. 특히 ABR packager 변경, TURN 추가, 용량 목표 미달, OAuth 외부 설정 미완료는 숨기지 않고 완료 보고에 포함한다.
+
+## 로컬 구현 순서 예외 (2026-11-09)
+
+사용자는02 실제 휴대폰·외부망 인수가 보류된 상태에서04 로컬 구현부터 진행하도록 승인했다.01 인증·CRUD와 검증된 단일 품질 실험을 바탕으로 회차 제어→인증 WHIP/변환→Flutter 송출·익명 시청 순서로 구현한다. 실제 기기·외부망·VAAPI·ABR와 최종 인수 기준은 유지하며 로컬 자동 검사로 대체하지 않는다.

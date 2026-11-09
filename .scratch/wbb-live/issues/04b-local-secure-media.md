@@ -1,7 +1,7 @@
 # 04-B: 로컬 인증 미디어 송출·시청 통합
 
-**Status:** ready-for-agent
-**Blocked by:** 04-A 독립 리뷰 완료. 실제02 휴대폰/외부망 이전 로컬 구현은 사용자 승인.
+**Status:** in-progress
+**Blocked by:** 04-A(done,03ee70c), Draft PR5의 backend/frontend CI 통과. 실제02 휴대폰/외부망 이전 로컬 구현은 사용자 승인.
 **구현 담당:** 지정 대체 Codex 단독 구현. 조정자 설계·독립 리뷰.
 
 ## 목표
@@ -29,3 +29,15 @@ Flutter 로그인 소유자가 PC 화면·공유 오디오·마이크를 송출�
 기존8090/CPU 미디어와 사용자 자원을 보존하고 새 전용 loopback Compose/포트/DB로 검사한다. 익명·타인·다른family·다른회차·종료grant·중복POST·refresh·logout/reuse를 HTTP+실제DB에서 검사한다. 실제MediaMTX/FFmpeg로 원래 ingress/PID 종료, 이전HLS URL 거절, 다른 회차 보존, 제어 장애STOPPING/복구 종료를 확인한다. 독립 Chrome 프로세스의 로그인 송출자/익명 시청자로 합성 영상·두 음원·decoded frames·종료를 검사하고 실제 캡처 인수와 구분한다. Go race/vet, Flutter analyze/test/web build, 소유 자원 정리.
 
 고정spike/source, any publish, 무한 FFmpeg 루프, 모든 시청자Basic Auth를 제품으로 복사하지 않는다.04-B1 시작 시 감독 프로세스/재시작 식별, 미디어 인가, HTTP 세부 계약의 짧은 설계안을 조정자에게 보고해 확정한 뒤 구현한다.
+
+## 04-B1 설계 결정
+
+API와 분리한 단일 worker 컨테이너가 회차/generation별 FFmpeg 자식을 감독한다. API 재시작은 worker를 중단하지 않는다. DB에는 lease 소유자와 실행 ID, worker 실행 식별자, PID/프로세스 시작 시각을 보관한다. PID 번호나 lease 만료만으로 부재를 단정하지 않는다. 프로세스 확인·종료는 해당 worker의 PID namespace에서 수행하며 host Docker socket을 사용하지 않는다. worker 종료가 컨테이너 종료로 이어져 자식이 함께 회수되는 실행 형태를 사용하고 이를 실제 kill/restart로 검증한다. 새 worker는 과거 worker의 종료와 MediaMTX 연결 부재를 확인한 뒤 인수한다. 이를 증명할 수 없으면STOPPING을 유지한다.
+
+MediaMTX 직접 포트는 내부 전용이며 생성 작업별 내부 자격과 worker read/publish 자격을 분리한다. 인증 callback은 내부 호출만 허용하고 action/protocol/정확한 회차·generation 경로를 검사한다. Caddy의 공개 HLS 경로에는 외부가 위조한 인가용 헤더를 신뢰하지 않는 forward_auth를 적용한다. 모든 master/media/init/part/segment GET/HEAD에서 회차/generation/LIVE를 검사하고 no-store를 적용한다. 이미 클라이언트가 받은 버퍼나 종료 직전 승인된 전송의 회수를 보장하지 않는다. 종료 이후 신규 요청 거절과 실제 송출/변환 중단을 검증한다.
+
+WHIP은 RFC9725를 기준으로 고정 MediaMTX 버전에서 검증한 Content-Type/ETag/If-Match/Location을 명시한다. 생성 작업 예약 후 upstream POST하며 timeout/늦은201/응답유실은 미해결 작업으로 유지한다. 연결 조회는 회차/generation/작업에 한정하고 다른 회차를 정리하지 않는다. callback과worker 제어 endpoint는 인터넷에 노출하지 않는다.
+
+추가 경합 기준: 증가하는 fencing token을 작업 할당·상태 반영·worker 내부 자격 검증에 포함한다. lease 만료만으로 이전 worker가 사라졌다고 판단하지 않으며 DB 단절 시 신규 시작을 거절하고 lease 갱신 실패 작업을 안전하게 종료한다. 이전 RTSP 연결은 자격 재검사에만 의존하지 않고 명시적으로 종료한다.
+
+HLS 인가 직후 stop 및 대기 중 `_HLS_msn` blocking reload를 검사한다. 이미 승인된 요청은 회차 경로 제거/연결 취소 또는 명시한 유한 최대 대기시간으로 끝내며 no-store만으로 진행 중 응답 취소를 주장하지 않는다.

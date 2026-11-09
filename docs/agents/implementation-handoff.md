@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 04-B1 설계 승인·구현 재개
+
+04-A 게시 체크포인트는03ee70c, [Draft PR5](https://github.com/impwy/wbb-live/pull/5), base work/media-device-acceptance다. 새 브랜치work/local-secure-media에서 지정 대체 Codex에게04-B1 구체 설계 보고를 요청했다. 보고 대상은 미디어 worker 감독/재시작 회수, MediaMTX 인증과 Caddy HLS 인가, WHIP 중계·응답 유실 계약이다. 설계 검토와 독립 보완을 티켓에 반영했다. 해당 worker namespace의 프로세스 신원 검증, lease fencing, HLS 종료 경합 기준을 확정하고 지정 대체 Codex에게04-B1 구현 재개를 지시한다. 조정자는04-A 독립 검사·리뷰를 마쳤고 실제 기기/외부망 인수는 여전히 미완료다.
+
 ### 최신: 04-A 검증 완료, 04-B 준비
 
 work/local-session-control에서04-A 로컬 회차 준비·취소·공개 상태를 구현하고 검증했다. 지정 대체 Codex가 단독 구현했으며 조정자 독립 Go race/vet, Flutter36개/analyze/build, 실제 API/DB 재시작과 Redis 장애를 포함한17개 검사를 통과했다. 두 축 리뷰에서 발견한4개 고유 결함을 수정했고 잔여 확정 결함0건이다. 다음 범위는 `04b-local-secure-media.md`의04-B1 인증된 미디어 제어와 단일 품질 처리다. 실제 기기/외부망 관문은 미완료이며 기존8090/CPU서비스는 유지한다.

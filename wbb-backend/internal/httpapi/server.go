@@ -51,7 +51,7 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	}
 	var completion *mediacompletion.Client
 	if cfg.MediaCompletionURL != "" {
-		completion, _ = mediacompletion.NewClient(strings.TrimSuffix(cfg.MediaCompletionURL, "/"), cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
+		completion, _ = mediacompletion.NewClient(cfg.MediaCompletionURL, cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
 	}
 	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), completion: completion}
 }

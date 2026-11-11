@@ -194,7 +194,14 @@ func (w *Worker) recordVerifiedRunExit(ctx context.Context, sid string, run *run
 		return fmt.Errorf("cannot record verified FFmpeg exit: %w", err)
 	}
 	if result.RowsAffected() != 1 {
-		return errors.New("verified FFmpeg exit lost its execution identity")
+		// The same run may be retried after its exit was committed but the
+		// session transition failed. Accept only that exact durable identity.
+		var state string
+		if err := w.DB.QueryRow(ctx, `SELECT state FROM media_worker_runs WHERE broadcast_session_id=$1
+			AND run_id=$2 AND fencing_token=$3 AND media_generation=$4 AND worker_incarnation=$5`,
+			sid, run.runID, run.fence, run.generation, w.incarnation).Scan(&state); err != nil || state != "exited" {
+			return errors.New("verified FFmpeg exit lost its execution identity")
+		}
 	}
 	return nil
 }

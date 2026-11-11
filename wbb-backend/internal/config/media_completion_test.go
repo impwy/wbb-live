@@ -23,6 +23,10 @@ func TestMediaRequiresSeparatePinnedCompletionConfiguration(t *testing.T) {
 	if err != nil || len(cfg.MediaCompletionKey) != 32 || cfg.MediaCompletionRoot != "root-a" {
 		t.Fatalf("pinned media: %v", err)
 	}
+	t.Setenv("WBB_COMPLETION_URL", "http://mediamtx:9998/")
+	if _, err := Load(); err != nil {
+		t.Fatalf("trailing slash origin rejected by config: %v", err)
+	}
 	for _, invalid := range []string{"http://other.test/path", "https://mediamtx:9998", "http://user@mediamtx:9998"} {
 		t.Setenv("WBB_COMPLETION_URL", invalid)
 		if _, err := Load(); err == nil {

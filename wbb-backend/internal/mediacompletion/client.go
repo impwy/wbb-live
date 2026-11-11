@@ -47,7 +47,7 @@ type Client struct {
 
 func NewClient(base string, key []byte, root, slot string) (*Client, error) {
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || len(key) < 32 || root == "" || slot == "" {
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || len(key) < 32 || root == "" || slot == "" {
 		return nil, errors.New("invalid private completion configuration")
 	}
 	return &Client{base: strings.TrimSuffix(base, "/"), key: append([]byte(nil), key...), root: root, slot: slot,
@@ -109,10 +109,14 @@ func (c *Client) Lifecycle(ctx context.Context) (Tuple, error) {
 	if err = requireFields(body, "contract_version", "root", "slot", "epoch", "epoch_sequence", "sequence"); err != nil {
 		return Tuple{}, err
 	}
-	var tuple Tuple
-	if err = json.Unmarshal(body, &tuple); err != nil {
+	var response struct {
+		Tuple
+		GeneralSequence uint64 `json:"sequence"`
+	}
+	if err = json.Unmarshal(body, &response); err != nil {
 		return Tuple{}, err
 	}
+	tuple := response.Tuple
 	if !c.validTuple(tuple) {
 		return Tuple{}, errors.New("completion lifecycle tuple mismatch")
 	}

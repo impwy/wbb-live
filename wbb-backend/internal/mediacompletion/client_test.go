@@ -40,6 +40,44 @@ func TestLifecyclePinsContractAndDeploymentIdentity(t *testing.T) {
 	}
 }
 
+func TestLifecycleRejectsInvalidGeneralSequence(t *testing.T) {
+	for _, tc := range []struct {
+		name, sequence string
+		accepted       bool
+	}{
+		{"zero", "0", true}, {"positive", "17", true},
+		{"string", `"1"`, false}, {"negative", "-1", false},
+		{"fraction", "1.5", false}, {"overflow", "18446744073709551616", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"contract_version":"wbb-media-completion/1","root":"root","slot":"slot","epoch":"` + testEpoch + `","epoch_sequence":3,"sequence":` + tc.sequence + `}`))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, make([]byte, 32), "root", "slot")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Lifecycle(context.Background())
+			if (err == nil) != tc.accepted {
+				t.Fatalf("sequence %s: accepted=%t error=%v", tc.name, err == nil, err)
+			}
+		})
+	}
+}
+
+func TestClientAcceptsOnlyOriginWithOptionalTrailingSlash(t *testing.T) {
+	for _, endpoint := range []string{"http://localhost:9998", "http://localhost:9998/"} {
+		client, err := NewClient(endpoint, make([]byte, 32), "root", "slot")
+		if err != nil || client.base != "http://localhost:9998" {
+			t.Fatalf("origin %q: client=%+v err=%v", endpoint, client, err)
+		}
+	}
+	if _, err := NewClient("http://localhost:9998/other", make([]byte, 32), "root", "slot"); err == nil {
+		t.Fatal("path-bearing completion URL accepted")
+	}
+}
+
 func TestQueryRequiresExactCompletedTuple(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v3/wbb/operations/11111111-1111-4111-8111-111111111111" || r.URL.Query().Get("epoch") != testEpoch || r.Header.Get("X-WBB-Epoch") != testEpoch || len(r.Header.Get("X-WBB-Signature")) != 64 {

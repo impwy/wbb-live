@@ -326,8 +326,14 @@ func (w *Worker) reconcile(ctx context.Context, s sessionRow, snap MediaSnapshot
 	}
 	run := w.runs[s.id]
 	if run != nil && !run.process.GroupAlive() {
+		if err := w.recordVerifiedRunExit(ctx, s.id, run); err != nil {
+			return err
+		}
+		if err := w.transition(ctx, s, "stopping", "transcoder_exited", run.fence); err != nil {
+			return err
+		}
 		delete(w.runs, s.id)
-		return w.transition(ctx, s, "stopping", "transcoder_exited", run.fence)
+		return nil
 	}
 	if run == nil && srcReady {
 		var attached bool

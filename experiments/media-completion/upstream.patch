@@ -772,7 +772,7 @@ index 941424e..fee2999 100644
  	ctx.Header("Access-Control-Expose-Headers", "ETag, ID, Accept-Patch, Link, Location")
  	ctx.Header("ETag", "*")
 diff --git a/internal/servers/webrtc/server.go b/internal/servers/webrtc/server.go
-index 4547016..1b574ca 100644
+index 4547016..179d376 100644
 --- a/internal/servers/webrtc/server.go
 +++ b/internal/servers/webrtc/server.go
 @@ -31,6 +31,7 @@ import (
@@ -870,7 +870,7 @@ index 4547016..1b574ca 100644
  	str := "started with listeners on " + s.Address
  	if !s.Encryption {
  		str += " (TCP/HTTP)"
-@@ -377,6 +388,16 @@ outer:
+@@ -377,6 +388,10 @@ outer:
  			break outer
  
  		case req := <-s.chNewSession:
@@ -878,16 +878,10 @@ index 4547016..1b574ca 100644
 +				req.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("operation closing")}
 +				continue
 +			}
-+			if req.completion != nil {
-+				if err := req.completion.WaitBarrier(wbbcompletion.BeforeSessionInitialize); err != nil || req.completion.IsClosing() {
-+					req.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("operation interrupted before initialization")}
-+					continue
-+				}
-+			}
  			sx := &session{
  				net:                          s.net,
  				parentCtx:                    s.ctx,
-@@ -401,6 +422,7 @@ outer:
+@@ -401,6 +416,7 @@ outer:
  				externalCmdPool:              s.ExternalCmdPool,
  				pathManager:                  s.PathManager,
  				parent:                       s,
@@ -895,12 +889,19 @@ index 4547016..1b574ca 100644
  			}
  			sx.initialize()
  			s.sessions[sx] = struct{}{}
-@@ -541,12 +563,16 @@ func (s *Server) generateICEServers(clientConfig bool) ([]pwebrtc.ICEServer, err
+@@ -541,12 +557,23 @@ func (s *Server) generateICEServers(clientConfig bool) ([]pwebrtc.ICEServer, err
  
  // newSession is called by webRTCHTTPServer.
  func (s *Server) newSession(req newSessionReq) newSessionRes {
 -	req.res = make(chan newSessionRes)
 +	req.res = make(chan newSessionRes, 1)
++	if req.completion != nil {
++		// This request handler owns the creation ref while held. Waiting in
++		// the server event loop would block unrelated API lists and sessions.
++		if err := req.completion.WaitBarrier(wbbcompletion.BeforeSessionInitialize); err != nil || req.completion.IsClosing() {
++			return newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("operation interrupted before initialization")}
++		}
++	}
  
  	select {
  	case s.chNewSession <- req:
@@ -913,7 +914,7 @@ index 4547016..1b574ca 100644
  	case <-s.ctx.Done():
  		return newSessionRes{
  			errStatusCode: http.StatusInternalServerError,
-@@ -567,7 +593,7 @@ func (s *Server) closeSession(sx *session) {
+@@ -567,7 +594,7 @@ func (s *Server) closeSession(sx *session) {
  func (s *Server) addSessionCandidates(
  	req addSessionCandidatesReq,
  ) addSessionCandidatesRes {
@@ -923,7 +924,7 @@ index 4547016..1b574ca 100644
  	case s.chAddSessionCandidates <- req:
  		res1 := <-req.res
 diff --git a/internal/servers/webrtc/server_test.go b/internal/servers/webrtc/server_test.go
-index f37c42f..b2811bc 100644
+index f37c42f..b2d8cc1 100644
 --- a/internal/servers/webrtc/server_test.go
 +++ b/internal/servers/webrtc/server_test.go
 @@ -6,6 +6,7 @@ import (
@@ -934,7 +935,7 @@ index f37c42f..b2811bc 100644
  	"net/http"
  	"net/url"
  	"reflect"
-@@ -29,8 +30,141 @@ import (
+@@ -29,8 +30,214 @@ import (
  	"github.com/bluenviron/mediamtx/internal/stream"
  	"github.com/bluenviron/mediamtx/internal/test"
  	"github.com/bluenviron/mediamtx/internal/unit"
@@ -1070,6 +1071,79 @@ index f37c42f..b2811bc 100644
 +	op.DoneCreation()
 +	if got := r.Query("op"); got.State != wbbcompletion.Completed {
 +		t.Fatalf("completion %s", got.State)
++	}
++}
++
++func TestBeforeSessionInitializeBarrierDoesNotBlockOtherSession(t *testing.T) {
++	dir := t.TempDir()
++	anchor := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := wbbcompletion.Bootstrap(anchor, dir); err != nil {
++		t.Fatal(err)
++	}
++	r, err := wbbcompletion.Open(anchor, dir, 3)
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.EnableBarriers()
++	defer r.AbortBarriers()
++	if err := r.ArmBarrier(wbbcompletion.BeforeSessionInitialize, "a"); err != nil {
++		t.Fatal(err)
++	}
++	a, err := r.Begin("a", "path-a", "digest-a")
++	if err != nil {
++		t.Fatal(err)
++	}
++	b, err := r.Begin("b", "path-b", "digest-b")
++	if err != nil {
++		t.Fatal(err)
++	}
++	s := &Server{ctx: context.Background(), chNewSession: make(chan newSessionReq)}
++	aResult := make(chan newSessionRes, 1)
++	go func() {
++		aResult <- s.newSession(newSessionReq{ctx: context.Background(), pathName: "a", completion: a})
++	}()
++	deadline := time.Now().Add(time.Second)
++	for !r.BarrierStatus(wbbcompletion.BeforeSessionInitialize, "a").Arrived && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	if !r.BarrierStatus(wbbcompletion.BeforeSessionInitialize, "a").Arrived {
++		t.Fatal("A did not reach its barrier")
++	}
++	bResult := make(chan newSessionRes, 1)
++	go func() {
++		bResult <- s.newSession(newSessionReq{ctx: context.Background(), pathName: "b", completion: b})
++	}()
++	select {
++	case req := <-s.chNewSession:
++		if req.pathName != "b" {
++			t.Fatalf("held A entered the shared event loop: %s", req.pathName)
++		}
++		req.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("test complete")}
++	case <-time.After(time.Second):
++		t.Fatal("B could not enter the shared event loop while A was held")
++	}
++	<-bResult
++	if got := r.CloseOperation("a"); got.State != wbbcompletion.Closing {
++		t.Fatalf("held A closed early: %s", got.State)
++	}
++	if err := r.ReleaseBarrier(wbbcompletion.BeforeSessionInitialize, "a"); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case result := <-aResult:
++		if result.errStatusCode != http.StatusConflict {
++			t.Fatalf("closed A entered the loop: %d", result.errStatusCode)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("A did not leave after barrier release")
++	}
++	a.DoneCreation()
++	b.DoneCreation()
++	if got := r.Query("a"); got.State != wbbcompletion.Completed {
++		t.Fatalf("A completion after release: %s", got.State)
 +	}
 +}
 +

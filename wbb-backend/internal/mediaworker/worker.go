@@ -35,7 +35,14 @@ type Worker struct {
 	lockFile           *os.File
 	runs               map[string]*running
 	lostLease          map[string]bool
+	snapshotFailedAt   time.Time
 }
+
+// A short management stall must not kill a separate healthy broadcast. If
+// management remains unavailable, the worker can no longer validate media
+// state, so it revokes publication and stops its controlled processes. It
+// still cannot claim ENDED until a later snapshot and completion proof.
+const maxSnapshotOutage = 45 * time.Second
 
 type running struct {
 	process           *Process
@@ -208,30 +215,27 @@ func (w *Worker) tick(ctx context.Context) error {
 	snapshot, err := w.MTX.Snapshot(snapCtx)
 	snapCancel()
 	if err != nil {
-		return err
+		if w.snapshotFailedAt.IsZero() {
+			w.snapshotFailedAt = time.Now()
+		}
+		if time.Since(w.snapshotFailedAt) >= maxSnapshotOutage {
+			if stopErr := w.stopForSnapshotOutage(ctx); stopErr != nil {
+				return fmt.Errorf("media snapshot unavailable; stop transition failed: %w", stopErr)
+			}
+			return fmt.Errorf("media snapshot unavailable beyond %s: %w", maxSnapshotOutage, err)
+		}
+		// A blocked management event loop cannot prove any session's media
+		// state. Defer reconciliation while renewing the DB-fenced leases;
+		// killing every LIVE run here would let one session's barrier end an
+		// unrelated broadcast. DB/lease failures still reach Run's stopAll.
+		w.Log.Warn("media snapshot unavailable; reconciliation deferred", "error", err)
+		return w.renewLeases(ctx)
 	}
+	w.snapshotFailedAt = time.Time{}
 	if err := w.renewLeases(ctx); err != nil {
 		return err
 	}
-	queryCtx, queryCancel := context.WithTimeout(ctx, 4*time.Second)
-	rows, err := w.DB.Query(queryCtx, `SELECT id::text,broadcast_id::text,state,media_generation,media_fencing_token,prepare_deadline,first_ingress_at,ingress_lost_at FROM broadcast_sessions WHERE state IN ('starting','live','stopping') ORDER BY created_at`)
-	if err != nil {
-		queryCancel()
-		return err
-	}
-	var sessions []sessionRow
-	for rows.Next() {
-		var s sessionRow
-		if err := rows.Scan(&s.id, &s.bid, &s.state, &s.generation, &s.fence, &s.deadline, &s.firstIngress, &s.lostAt); err != nil {
-			rows.Close()
-			queryCancel()
-			return err
-		}
-		sessions = append(sessions, s)
-	}
-	err = rows.Err()
-	rows.Close()
-	queryCancel()
+	sessions, err := w.activeSessions(ctx)
 	if err != nil {
 		return err
 	}
@@ -279,6 +283,47 @@ func (w *Worker) tick(ctx context.Context) error {
 			}
 			// Cleanup starts next cycle with a fresh MediaMTX snapshot. This also
 			// bounds the gap before healthy sessions renew their leases.
+		}
+		if err := w.renewLeases(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Worker) activeSessions(ctx context.Context) ([]sessionRow, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	rows, err := w.DB.Query(queryCtx, `SELECT id::text,broadcast_id::text,state,media_generation,media_fencing_token,prepare_deadline,first_ingress_at,ingress_lost_at FROM broadcast_sessions WHERE state IN ('starting','live','stopping') ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []sessionRow
+	for rows.Next() {
+		var s sessionRow
+		if err := rows.Scan(&s.id, &s.bid, &s.state, &s.generation, &s.fence, &s.deadline, &s.firstIngress, &s.lostAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+func (w *Worker) stopForSnapshotOutage(ctx context.Context) error {
+	sessions, err := w.activeSessions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range sessions {
+		if s.state != "starting" && s.state != "live" {
+			continue
+		}
+		transitionCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		err = w.transition(transitionCtx, s, "stopping", "media_control_unavailable", s.fence)
+		cancel()
+		if err != nil {
+			return err
 		}
 		if err := w.renewLeases(ctx); err != nil {
 			return err

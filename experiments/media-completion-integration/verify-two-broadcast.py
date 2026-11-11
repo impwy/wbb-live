@@ -8,7 +8,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
+
+from harness_lifecycle import group_alive, run_owned, terminate_group
+from hold_continuity import verify_hold_continuity
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -43,18 +47,27 @@ def result(log):
 
 
 def main():
+    stage = sys.argv[1] if len(sys.argv) > 1 else None
+    allowed = {'before_register', 'before_session_initialize', 'during_auth',
+               'before_add_publisher', 'during_rtp_callback'}
+    if stage is not None and stage not in allowed:
+        raise RuntimeError('invalid product barrier stage')
     if query("SELECT count(*) FROM broadcast_sessions WHERE state IN ('starting','live','stopping')") != '0':
         raise RuntimeError('isolated stack has an active session')
     command = ['node', str(HERE / 'verify-browser.mjs')]
-    env = dict(os.environ, WBB_ISOLATED_HOLD_LIVE_SECONDS='50',
+    hold = '30' if stage else '50'
+    env = dict(os.environ, WBB_ISOLATED_HOLD_LIVE_SECONDS=hold,
                WBB_CHECK_CONTINUOUS_LEASE='1', WBB_REQUIRE_CONTINUOUS_PLAYBACK='1')
     with B_LOG.open('w') as b_output:
-        b = subprocess.Popen(command, cwd=ROOT, stdout=b_output, stderr=subprocess.STDOUT, env=env)
+        b = subprocess.Popen(command, cwd=ROOT, stdout=b_output, stderr=subprocess.STDOUT,
+                             env=env, start_new_session=True)
+        failure = None
+        cleanup = []
         try:
             sid = None
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline and b.poll() is None:
-                match = re.search(r'holding live 50s session=([0-9a-f-]{36})', B_LOG.read_text())
+                match = re.search(r'holding live ' + hold + r's session=([0-9a-f-]{36})', B_LOG.read_text())
                 if match:
                     sid = match.group(1)
                     break
@@ -62,10 +75,13 @@ def main():
             if sid is None:
                 raise RuntimeError('B did not reach LIVE hold')
             before = identity(sid)
+            a_command = (['node', str(HERE / 'verify-product-barrier.mjs'), stage]
+                         if stage else command)
             with A_LOG.open('w') as a_output:
-                a = subprocess.run(command, cwd=ROOT, stdout=a_output,
-                                   stderr=subprocess.STDOUT, timeout=110, check=False)
-            if a.returncode != 0 or result(A_LOG).get('completionProved') is not True:
+                a_code = run_owned(a_command, cwd=ROOT, stdout=a_output,
+                                   stderr=subprocess.STDOUT, timeout=110)
+            a_result = result(A_LOG) if a_code == 0 else {}
+            if a_code != 0 or (a_result.get('completed') if stage else a_result.get('completionProved')) is not True:
                 raise RuntimeError('A did not stop with completed proof')
             after = identity(sid)
             if not before.startswith('live,') or after != before:
@@ -73,19 +89,38 @@ def main():
             if b.wait(timeout=90) != 0:
                 raise RuntimeError('B hold or cleanup failed')
             observed = result(B_LOG)
-            if observed.get('completionProved') is not True or observed.get('holdAudioSamples', 0) < 10 or observed.get('holdProgressFrames', 0) < 20:
+            if observed.get('completionProved') is not True or observed.get('holdAudioSamples', 0) < (int(hold)+4)//5 or observed.get('holdProgressFrames', 0) < 20:
                 raise RuntimeError('B video, audio, or completion proof missing')
-            print(json.dumps({'A': 'ended', 'B': 'ended', 'BIdentityPreserved': True,
+            aligned = verify_hold_continuity(observed.get('holdSamples', []),
+                                             a_result.get('holdStartWallMs'),
+                                             a_result.get('holdEndWallMs')) if stage else None
+            if query("SELECT count(*) FROM broadcast_sessions WHERE state IN ('starting','live','stopping')") != '0':
+                raise RuntimeError('owned session remained after both browser flows')
+            print(json.dumps({'stage':stage,'A': 'ended', 'B': 'ended', 'BIdentityPreserved': True,
                               'BHoldAudioSamples': observed['holdAudioSamples'],
                               'BHoldFrames': observed['holdProgressFrames'],
+                              'alignedHold': aligned,
                               'logs': [str(A_LOG), str(B_LOG)]}))
+        except Exception as error:
+            failure = error
         finally:
             if b.poll() is None:
                 try:
                     b.wait(timeout=90)
                 except subprocess.TimeoutExpired:
-                    b.terminate()
-                    raise RuntimeError('B verifier did not finish; inspect its owned session before reuse')
+                    cleanup.append('B verifier exceeded 90s')
+            if group_alive(b.pid):
+                try:
+                    terminate_group(b)
+                except Exception as error:
+                    cleanup.append(f'B process group cleanup: {error}')
+            try:
+                if query("SELECT count(*) FROM broadcast_sessions WHERE state IN ('starting','live','stopping')") != '0':
+                    cleanup.append('an owned session remains after B cleanup')
+            except Exception as error:
+                cleanup.append(f'owned session check: {error}')
+        if failure or cleanup:
+            raise RuntimeError('; '.join(([str(failure)] if failure else []) + cleanup))
 
 
 if __name__ == '__main__':

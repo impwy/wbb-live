@@ -12,9 +12,12 @@ import { fileURLToPath } from 'node:url';
 const ORIGIN = 'https://localhost:19543';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
+const testEnvFile = process.env.WBB_TEST_ENV_FILE || path.join(here,'.env');
+const testDatabase = process.env.WBB_CAPACITY_DB || 'wbb';
+if(!/^wbb(?:_[a-z0-9_]+)?$/.test(testDatabase))throw new Error('invalid isolated database name');
 
 function controlHeader() {
-  const env = fs.readFileSync(path.join(here,'.env'),'utf8');
+  const env = fs.readFileSync(testEnvFile,'utf8');
   const secret = env.match(/^WBB_MEDIA_SECRET=(.+)$/m)?.[1];
   if(!secret || secret.length<32)throw new Error('isolated test media secret missing');
   const password=crypto.createHmac('sha256',secret).update('control:api').digest('hex');
@@ -36,12 +39,12 @@ async function mediaList(kind) {
 async function dbRun(sid) {
   if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
   const sql=`SELECT state||','||COALESCE(pid::text,'')||','||fencing_token::text||','||round(extract(epoch from lease_until-now())*1000)::text FROM media_worker_runs WHERE broadcast_session_id='${sid}'`;
-  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
   const [state,pid,fence,margin]=stdout.trim().split(',');return {state,pid:Number(pid),fence:Number(fence),leaseMarginMs:Number(margin)};
 }
 
 async function dedicatedSQL(sql) {
-  await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-v','ON_ERROR_STOP=1','-U','wbb','-d','wbb','-c',sql],{timeout:5000});
+  await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-v','ON_ERROR_STOP=1','-U','wbb','-d',testDatabase,'-c',sql],{timeout:5000});
 }
 
 async function removeTransitionGuard() {
@@ -55,9 +58,9 @@ async function removeRunExitGuard() {
 async function dbCompletion(sid) {
   if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
   const sql=`SELECT state||','||COALESCE(completion_evidence_kind,'')||','||COALESCE(completion_contract_version,'')||','||COALESCE(completion_root,'')||','||COALESCE(completion_slot,'')||','||COALESCE(completion_epoch,'')||','||COALESCE(completion_epoch_sequence::text,'')||','||COALESCE(completion_revision::text,'') FROM media_create_operations WHERE broadcast_session_id='${sid}'`;
-  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
   const [state,evidence,contract,root,slot,epoch,sequence,revision]=stdout.trim().split(',');
-  const env=fs.readFileSync(path.join(here,'.env'),'utf8');
+  const env=fs.readFileSync(testEnvFile,'utf8');
   const expectedRoot=env.match(/^WBB_COMPLETION_ROOT=(.+)$/m)?.[1];
   const expectedSlot=env.match(/^WBB_COMPLETION_SLOT=(.+)$/m)?.[1];
   return state==='closed'&&evidence==='completed'&&contract==='wbb-media-completion/1'&&
@@ -67,28 +70,28 @@ async function dbCompletion(sid) {
 async function dbSessionOperation(sid) {
   if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
   const sql=`SELECT s.state||','||o.state FROM broadcast_sessions s JOIN media_create_operations o ON o.broadcast_session_id=s.id WHERE s.id='${sid}'`;
-  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
   const [session,operation]=stdout.trim().split(',');return {session,operation};
 }
 
 async function dbHasStoppingEvent(sid) {
   if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
   const sql=`SELECT EXISTS(SELECT 1 FROM outbox_events WHERE aggregate_id='${sid}' AND type='broadcast.session.stopping')`;
-  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
   return stdout.trim()==='t';
 }
 
 async function dbResourcePath(sid) {
   if(!/^[0-9a-f-]{36}$/.test(sid))throw new Error('invalid session id');
   const sql=`SELECT upstream_resource_path FROM media_create_operations WHERE broadcast_session_id='${sid}'`;
-  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  const {stdout}=await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
   return stdout.trim();
 }
 
 async function setResourcePath(sid, resource) {
   if(!/^[0-9a-f-]{36}$/.test(sid)||!/^\/[a-zA-Z0-9/_-]+$/.test(resource))throw new Error('unsafe test resource');
   const sql=`UPDATE media_create_operations SET upstream_resource_path='${resource}' WHERE broadcast_session_id='${sid}'`;
-  await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d','wbb','-At','-c',sql],{timeout:5000});
+  await execFileAsync('docker',['exec','wbb-media-completion-integration-postgres-1','psql','-U','wbb','-d',testDatabase,'-At','-c',sql],{timeout:5000});
 }
 
 async function ffmpegExists(pid) {
@@ -105,6 +108,37 @@ async function finite(label, milliseconds, task) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} exceeded ${milliseconds}ms`)), milliseconds); }),
     ]);
   } finally { clearTimeout(timer); }
+}
+
+async function closeOwnedBrowser(server,label,errors) {
+  const child=server.process();
+  try { await finite(`${label} graceful close`,5000,()=>server.close()); } catch {}
+  if(child.exitCode===null && child.signalCode===null) {
+    child.kill('SIGKILL');
+    await finite(`${label} process exit`,5000,()=>new Promise(resolve=>{
+      if(child.exitCode!==null||child.signalCode!==null)resolve();
+      else child.once('exit',resolve);
+    })).catch(error=>errors.push(new Error(`${label}: ${error.message}`)));
+  }
+  if(child.exitCode===null&&child.signalCode===null)errors.push(new Error(`${label} browser process remains`));
+}
+
+async function launchOwnedPair(browserType,args) {
+  const servers=[];
+  try {
+    const publisherServer=await browserType.launchServer({channel:'chrome',headless:true,args,timeout:10000});
+    servers.push(publisherServer);
+    const viewerServer=await browserType.launchServer({channel:'chrome',headless:true,args,timeout:10000});
+    servers.push(viewerServer);
+    const publisherBrowser=await browserType.connect(publisherServer.wsEndpoint(),{timeout:10000});
+    const viewerBrowser=await browserType.connect(viewerServer.wsEndpoint(),{timeout:10000});
+    return {publisherServer,viewerServer,publisherBrowser,viewerBrowser};
+  } catch(error) {
+    const cleanup=[];
+    for(const server of servers.reverse())await closeOwnedBrowser(server,'failed browser launch',cleanup);
+    if(cleanup.length)throw new AggregateError([error,...cleanup],'Chrome launch and cleanup failed');
+    throw error;
+  }
 }
 
 function leafPin() {
@@ -124,9 +158,8 @@ function leafPin() {
 async function main() {
   const pin = await leafPin();
   const args = [`--ignore-certificate-errors-spki-list=${pin}`, '--autoplay-policy=no-user-gesture-required'];
-  const publisherBrowser = await chromium.launch({channel:'chrome',headless:true,args,timeout:10000});
-  const viewerBrowser = await chromium.launch({channel:'chrome',headless:true,args,timeout:10000});
-  let publisher, viewer, setup, restorePath, summary, failure, managementPaused=false, transitionGuardInstalled=false, runExitGuardInstalled=false;
+  const {publisherServer,viewerServer,publisherBrowser,viewerBrowser}=await launchOwnedPair(chromium,args);
+  let publisher, viewer, setup, restorePath, summary, failure, managementPaused=false, mediamtxStopped=false, transitionGuardInstalled=false, runExitGuardInstalled=false;
   const cleanupErrors=[];
   try {
     publisher = await finite('publisher page',10000,()=>publisherBrowser.newPage());
@@ -232,9 +265,20 @@ async function main() {
 
     const holdSeconds=Number(process.env.WBB_ISOLATED_HOLD_LIVE_SECONDS||0);
     let minLeaseMarginMs=null;
-    let holdProgressFrames=0,holdProgressSeconds=0,holdAudioSamples=0,maxStallMs=0,postRestartFrames=null,sawStopping=false,stoppingEvent=false;
+    let holdProgressFrames=0,holdProgressSeconds=0,holdAudioSamples=0,maxStallMs=0,postRestartFrames=null,sawStopping=false,stoppingEvent=false,holdSamples=[];
     if(holdSeconds>0) {
       if(!Number.isInteger(holdSeconds)||holdSeconds>120)throw new Error('invalid isolated hold duration');
+      if(process.env.WBB_REQUIRE_CONTINUOUS_PLAYBACK==='1')await viewer.evaluate(()=>{
+        const v=window.__wbbViewer;
+        v.holdSamples=[];
+        const sample=()=>{
+          const bins=new Float32Array(v.analyser.frequencyBinCount);v.analyser.getFloatFrequencyData(bins);
+          const peak=(lo,hi)=>{let value=-Infinity;for(let k=Math.floor(lo*v.analyser.fftSize/v.audio.sampleRate);k<=Math.ceil(hi*v.analyser.fftSize/v.audio.sampleRate);k++)value=Math.max(value,bins[k]);return value};
+          v.holdSamples.push([Date.now(),v.video.getVideoPlaybackQuality()?.totalVideoFrames||0,v.video.currentTime,
+            peak(420,460),peak(640,680),Math.max(peak(300,350),peak(750,800))]);
+        };
+        sample();v.holdTimer=setInterval(sample,250);
+      });
       console.error(`browser phase: holding live ${holdSeconds}s session=${setup.sid}`);
       let lastFrames=frames,lastTime=await viewer.evaluate(()=>window.__wbbViewer.video.currentTime),lastProgressAt=Date.now();
       for(let i=0;i<holdSeconds;i++) {
@@ -277,11 +321,16 @@ async function main() {
           }
         }
       }
+      if(process.env.WBB_REQUIRE_CONTINUOUS_PLAYBACK==='1')holdSamples=await viewer.evaluate(()=>{
+        const v=window.__wbbViewer;clearInterval(v.holdTimer);v.holdTimer=null;return v.holdSamples;
+      });
       if(process.env.WBB_REQUIRE_CONTINUOUS_PLAYBACK==='1' && (holdProgressFrames<20 || holdProgressSeconds<2 || holdAudioSamples<Math.ceil(holdSeconds/5)))throw new Error(`viewer did not progress during hold: frames=${holdProgressFrames} seconds=${holdProgressSeconds} audioSamples=${holdAudioSamples}`);
       const resumed=await finite('post-hold session state',5000,()=>publisher.evaluate(async()=>{const r=await fetch(`/api/v1/broadcasts/${window.__wbb.bid}/sessions/current`,{signal:AbortSignal.timeout(3000)});return (await r.json()).session?.state}));
       if(process.env.WBB_EXPECT_CONTROL_OUTAGE==='1') {
         stoppingEvent=await dbHasStoppingEvent(setup.sid);
         if(!(sawStopping||stoppingEvent) || resumed!=='ended')throw new Error(`control outage did not recover through STOPPING: saw=${sawStopping} durable=${stoppingEvent} final=${resumed}`);
+      } else if(process.env.WBB_EXPECT_MTX_RESTART==='1') {
+        if(!['live','stopping','ended'].includes(resumed))throw new Error(`session after MediaMTX restart=${resumed}`);
       } else if(resumed!=='live')throw new Error(`session after hold=${resumed}`);
       if(process.env.WBB_EXPECT_WORKER_RESTART==='1' || process.env.WBB_EXPECT_API_RESTART==='1') {
         const recovered=await dbRun(setup.sid);
@@ -364,9 +413,23 @@ async function main() {
       if(stateAfterExit!=='stopping'&&stateAfterExit!=='ended')throw new Error(`FFmpeg exit did not stop session: ${stateAfterExit}`);
     }
     const managementOutage=process.env.WBB_EXPECT_MANAGEMENT_OUTAGE==='1';
-    if(managementOutage) {
-      await execFileAsync('docker',['pause','wbb-media-completion-integration-mediamtx-1'],{timeout:5000});
-      managementPaused=true;
+    const longManagementOutage=process.env.WBB_EXPECT_LONG_MANAGEMENT_OUTAGE==='1';
+    const mediamtxDeath=process.env.WBB_EXPECT_MTX_DEATH==='1';
+    let longOutageEvidence=null;
+    if(managementOutage||longManagementOutage||mediamtxDeath) {
+      if(mediamtxDeath)mediamtxStopped=true;else managementPaused=true;
+      await execFileAsync('docker',[mediamtxDeath?'stop':'pause','wbb-media-completion-integration-mediamtx-1'],{timeout:20000});
+    }
+    if(longManagementOutage||mediamtxDeath) {
+      await new Promise(resolve=>setTimeout(resolve,60000));
+      const held=await dbSessionOperation(setup.sid);
+      const run=await dbRun(setup.sid);
+      const ffmpegAlive=await ffmpegExists(liveRun.pid);
+      if(held.session!=='stopping'||held.operation==='closed'||run.state!=='exited'||ffmpegAlive)
+        throw new Error(`long management outage did not stop safely: ${JSON.stringify({held,runState:run.state,ffmpegAlive})}`);
+      longOutageEvidence={kind:mediamtxDeath?'process_stopped':'management_paused',held:held.session,operation:held.operation,run:run.state,ffmpegAlive};
+      await execFileAsync('docker',[mediamtxDeath?'start':'unpause','wbb-media-completion-integration-mediamtx-1'],{timeout:10000});
+      if(mediamtxDeath)mediamtxStopped=false;else managementPaused=false;
     }
     const redisOutage=process.env.WBB_EXPECT_REDIS_OUTAGE==='1';
     const controlOutage=process.env.WBB_EXPECT_CONTROL_OUTAGE==='1';
@@ -376,7 +439,7 @@ async function main() {
       const response=await fetch(`/api/v1/broadcasts/${bid}/sessions/${sid}/stop`,{method:'POST',signal:AbortSignal.timeout(5000),headers:{Authorization:`Bearer ${access}`}});
       return response.status;
     }));
-    if(!controlOutage && !naturalExit && stopped!==(redisOutage?503:202))throw new Error(`stop ${stopped}`);
+    if(!controlOutage && !naturalExit && !(process.env.WBB_EXPECT_MTX_RESTART==='1' && stopped===200) && !((longManagementOutage||mediamtxDeath)&&[200,202].includes(stopped)) && stopped!==(redisOutage?503:202))throw new Error(`stop ${stopped}`);
     console.error(`browser phase: stop request ${stopped}`);
     if(managementOutage) {
       await new Promise(resolve=>setTimeout(resolve,6500));
@@ -425,25 +488,34 @@ async function main() {
     if(endedRun.state!=='exited' || await ffmpegExists(liveRun.pid) || paths.some(x=>x.name?.startsWith(prefix)&&x.ready) || ingress.some(x=>x.path?.startsWith(prefix)) || rtsp.some(x=>x.path?.startsWith(prefix))) {
       throw new Error(`media remained after ENDED: run=${JSON.stringify(endedRun)} paths=${paths.length} ingress=${ingress.length} rtsp=${rtsp.length}`);
     }
-    summary={prepared:setup.status,whip:published.status,live:state,viewerFrames:frames,audioTonesDb:tones,minLeaseMarginMs,holdProgressFrames,holdProgressSeconds,holdAudioSamples,maxStallMs,postRestartFrames,sawStopping,stoppingEvent,stop:stopped,naturalExit,after,finalState,completionProved,stopToEndedMs:stopped===null?null:Date.now()-stopStartedAt,ffmpegExited:true,ingressAbsent:true,sessionId:setup.sid};
-  } catch(error) { failure=error; } finally {
+    summary={prepared:setup.status,whip:published.status,live:state,viewerFrames:frames,audioTonesDb:tones,minLeaseMarginMs,holdProgressFrames,holdProgressSeconds,holdAudioSamples,holdSamples,maxStallMs,postRestartFrames,sawStopping,stoppingEvent,stop:stopped,naturalExit,mtxRestart:process.env.WBB_EXPECT_MTX_RESTART==='1',longOutageEvidence,after,finalState,completionProved,stopToEndedMs:stopped===null?null:Date.now()-stopStartedAt,ffmpegExited:true,ingressAbsent:true,sessionId:setup.sid};
+  } catch(error) {
+    failure=error;
+    if(process.env.WBB_REQUIRE_CONTINUOUS_PLAYBACK==='1'&&viewer) {
+      const diagnostics=await finite('hold diagnostics',2000,()=>viewer.evaluate(()=>{
+        const v=window.__wbbViewer;return v?{samples:v.holdSamples?.slice(-32),audioState:v.audio.state,videoTime:v.video.currentTime}:null;
+      })).catch(()=>null);
+      if(diagnostics)console.error(`hold diagnostic ${JSON.stringify(diagnostics)}`);
+    }
+  } finally {
     if(runExitGuardInstalled)await removeRunExitGuard().catch(error=>cleanupErrors.push(new Error(`exit guard cleanup: ${error.message}`)));
     if(transitionGuardInstalled)await removeTransitionGuard().catch(error=>cleanupErrors.push(new Error(`transition guard cleanup: ${error.message}`)));
     if(managementPaused)await execFileAsync('docker',['unpause','wbb-media-completion-integration-mediamtx-1'],{timeout:5000}).catch(error=>cleanupErrors.push(new Error(`management unpause: ${error.message}`)));
+    if(mediamtxStopped)await execFileAsync('docker',['start','wbb-media-completion-integration-mediamtx-1'],{timeout:10000}).catch(error=>cleanupErrors.push(new Error(`MediaMTX restart: ${error.message}`)));
     if(restorePath && setup)await finite('restore isolated resource',6000,()=>setResourcePath(setup.sid,restorePath)).catch(error=>cleanupErrors.push(new Error(`restore resource: ${error.message}`)));
     if(setup && publisher)await finite('failure stop cleanup',7000,()=>publisher.evaluate(async()=>{const s=window.__wbb;if(!s)return;const r=await fetch(`/api/v1/broadcasts/${s.bid}/sessions/${s.sid}/stop`,{method:'POST',signal:AbortSignal.timeout(5000),headers:{Authorization:`Bearer ${s.access}`}});if(r.status!==200&&r.status!==202&&r.status!==409)throw new Error(`stop cleanup ${r.status}`)})).catch(error=>cleanupErrors.push(new Error(`stop cleanup: ${error.message}`)));
     if(publisher)await finite('publisher media cleanup',5000,()=>publisher.evaluate(()=>{const m=window.__wbb?.media;if(!m)return;clearInterval(m.timer);m.tones.forEach(x=>x.stop());m.video.stop();m.sound.stop();m.pc.close();m.audio.close()})).catch(error=>cleanupErrors.push(new Error(`publisher cleanup: ${error.message}`)));
-    if(viewer)await finite('viewer media cleanup',5000,()=>viewer.evaluate(()=>{const v=window.__wbbViewer;if(v){v.hls.destroy();v.audio.close();v.video.remove()}})).catch(error=>cleanupErrors.push(new Error(`viewer cleanup: ${error.message}`)));
+    if(viewer)await finite('viewer media cleanup',5000,()=>viewer.evaluate(()=>{const v=window.__wbbViewer;if(v){clearInterval(v.holdTimer);v.hls.destroy();v.audio.close();v.video.remove()}})).catch(error=>cleanupErrors.push(new Error(`viewer cleanup: ${error.message}`)));
     if(viewer)await finite('viewer page close',10000,()=>viewer.close({runBeforeUnload:false})).catch(error=>cleanupErrors.push(new Error(`viewer page close: ${error.message}`)));
     if(publisher)await finite('publisher page close',10000,()=>publisher.close({runBeforeUnload:false})).catch(error=>cleanupErrors.push(new Error(`publisher page close: ${error.message}`)));
-    await finite('viewer browser close',30000,()=>viewerBrowser.close()).catch(error=>cleanupErrors.push(new Error(`viewer close: ${error.message}`)));
-    await finite('publisher browser close',30000,()=>publisherBrowser.close()).catch(error=>cleanupErrors.push(new Error(`publisher close: ${error.message}`)));
+    await closeOwnedBrowser(viewerServer,'viewer',cleanupErrors);
+    await closeOwnedBrowser(publisherServer,'publisher',cleanupErrors);
   }
   if(failure || cleanupErrors.length)throw new AggregateError([...(failure?[failure]:[]),...cleanupErrors], 'isolated browser flow or cleanup failed');
   console.log(JSON.stringify(summary));
 }
 
-export { mediaList, dbRun, dbCompletion, ffmpegExists };
+export { mediaList, dbRun, dbCompletion, ffmpegExists, launchOwnedPair };
 
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   main().then(()=>process.exit(0),error=>{console.error(error.errors?.map(e=>e.message).join('; ')||error.message);process.exit(1)});

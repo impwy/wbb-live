@@ -2,7 +2,7 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 이메일 인증·방송 CRUD, PC 화면과 두 음원, 카메라·마이크, 익명 시청을 로컬 제품 흐름에서 구현·검증했습니다. 07-A2에서는 실제 PostgreSQL과 패치 MediaMTX를 연결해 저장된 완료 근거 뒤 방송을 종료하고 FFmpeg·ingress를 정리하는 흐름을 확인했습니다. 전체 제품 장애 매트릭스와 실제 iPhone·외부망·Google 자격·평가 로그인 인수는 남았습니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
+- **상태**: 이메일 인증·방송 CRUD, PC 화면과 두 음원, 카메라·마이크, 익명 시청을 로컬 제품 흐름에서 구현·검증했습니다. 07-A2에서는 실제 PostgreSQL과 패치 MediaMTX를 연결해 저장된 완료 근거 뒤 방송을 종료하고 FFmpeg·ingress를 정리하는 흐름, 제품 장벽과 MediaMTX 재시작·용량 경계를 검사했습니다. 실제 iPhone·외부망·Google 자격·평가 로그인 인수는 남았습니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
 - **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다. 공개 평가 로그인 준비는 09-A 범위다.
 - 설계 계약: `docs/design.md` (Codex 관리)

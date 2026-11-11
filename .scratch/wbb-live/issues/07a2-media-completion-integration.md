@@ -1,6 +1,6 @@
 # 07-A2: 종료 완료 계약의 제품 통합
 
-**Status:** in-review (로컬 제품 흐름 및 자연 종료·재시도 검증 완료; 전체 제품 장애 매트릭스와 공개 인수는 별도)
+**Status:** done (지원되는 신규 작업의 로컬 제품 종료 계약; 실제 기기·공개 인수는 09-A)
 **Blocked by:** 07-A1 실제 Linux 미디어·장애 매트릭스, 독립 검증 및 ADR0001 채택(2026-11-11 충족). 구현자는 별도 동결·인계 후 단독으로 시작한다.
 **목표:** known/unknown 생성 작업 모두 정확한 완료 근거를 저장한 뒤에만 closed 및 방송 ENDED를 확정한다.
 
@@ -48,7 +48,7 @@
 
 지정 단독 구현자가 제품 API·DB migration·worker와 공용 완료 client를 연결하고 전용 HTTPS/Flutter/MediaMTX 검증 스택을 작성했다. 조정자는 실제 PostgreSQL·두 Chrome의 WHIP/HLS·두 음원·종료 근거·FFmpeg/ingress 부재를 독립 확인했다. 두 축 리뷰에서 발견한 자연 FFmpeg 종료와 DB 전이 실패 경합, lifecycle 일반 `sequence` 타입, URL 뒤 `/` 설정 불일치를 수정했다. 자연 종료의 기록 실패 및 전이 실패 재시도는 각각 별도 실제 브라우저 검사로 통과했다. 실행 세부는 `docs/verification/07a2-media-completion-integration.md`, 리뷰는 `docs/reviews/07a2-media-completion-integration.md`를 따른다.
 
-남은 관문은 제품 설정의 등록·인증·AddPublisher·RTP barrier와 MediaMTX A→B→C 교체 전체 매트릭스, 구형 미완료 작업의 운영 복구 경로다. 실제 iPhone·외부망·평가 로그인은 09-A에서 인수한다. 구현자 편집은 독립 검증 동안 중단됐다.
+제품 등록·인증·AddPublisher·RTP barrier와 MediaMTX A→B→C, 용량 2·세 번째 불확실한 작업, 장기 관리 장애를 실제 제품 전용 스택에서 검사했다. 최종 이미지 장벽 중 B의 영상·두 음원 연속성, 장기 관리 장애, 전체 Go race는 조정자가 독립 재검증했다. 구형 미귀속 작업은 증거 없이 자동 ENDED로 승격하지 않으며 `docs/operations/legacy-media-operations.md`에 안전한 보류·분리 절차를 기록했다. 실제 iPhone·외부망·평가 로그인은 09-A에서 인수한다. 최종 결과는 `docs/verification/07a2-media-completion-integration.md`를 따른다.
 
 ## 구현 착수 설계 검토
 

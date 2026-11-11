@@ -1,6 +1,6 @@
 # 07-A2 종료 완료 제품 통합 리뷰
 
-상태: 제품 통합의 두 축 리뷰와 결함 수정 진행 중. 아래 처음 네 항목은 변경 전 코드에서 도출한 검토 기준이며, 뒤의 실행 결과와 구분한다.
+상태: 지원되는 신규 작업의 로컬 제품 종료 계약 리뷰 완료. 아래 처음 네 항목은 변경 전 코드에서 도출한 검토 기준이며, 뒤의 실행 결과와 구분한다.
 
 ## Spec
 
@@ -35,4 +35,12 @@ API의 `/health/ready`에 MediaMTX completion lifecycle 확인을 추가한 시�
 
 지정 구현자는 자연 종료에서 정확한 실행 신원의 `exited` 기록을 먼저 수행하고, 이후 세션 전이가 실패해 재시도할 때 같은 신원에 한해서만 idempotent로 받아들이도록 수정했다. 조정자 독립 브라우저가 자연 종료·전이 한 차례 실패의 복구와 완료 근거, 실제 자원 부재를 확인했다. 일반 `sequence`는 `uint64`로 decode하며 잘못된 타입·음수·분수·overflow를 거절하도록 테스트했고 API readiness의 malformed 응답 검사도 추가했다. 공용 client는 빈 경로와 단일 `/`를 허용하며 구현자가 API/worker 동시 기동과 브라우저 검사를 통과했다. 구형 작업은 `docs/operations/legacy-media-operations.md`에 안전한 보류·분리 절차를 기록했고 `docs/design.md`의 DELETE 상태코드를 제품과 맞췄다.
 
-제품 전체 barrier 및 A→B→C 재시작 매트릭스는 독립 통합 실행이 남았다. 구형 미완료 작업의 자동 복구 도구는 없다. 실제 기기·외부망 인수도 별도다. 이 범위를 검증 완료로 표시하지 않는다.
+제품 전체 barrier 및 A→B→C 재시작 매트릭스는 후속 전용 스택에서 실행했다. 구형 미귀속 작업의 자동 복구 도구는 없으며, 근거 없는 종료를 금지하는 운영 절차로 격리한다. 실제 기기·외부망 인수는 별도다.
+
+## 후속 제품 장벽 검사에서 발견한 범위
+
+제품 `before_session_initialize` 장벽에서 A는 6초 초과 보류 후 Stop→`completed`→ENDED가 됐지만, 별도 B의 관리 snapshot이 timeout되고 worker lease가 만료돼 FFmpeg가 종료됐다. 이는 B 연속성 조건에 맞지 않았다. 지정 구현자는 정상 관리 snapshot이 잠깐 지연될 때 기존 run의 DB lease를 갱신하고, 45초 이상 연속 실패하면 해당 run을 안전하게 종료해 STOPPING에 남기도록 수정했다. 최종 Linux MediaMTX 이미지에서 장벽 중 관리 조회가 54ms에 응답하고 B의 실행 신원·영상·두 음원이 유지됐다. 조정자 독립 재검사에서도 A 종료 중 B의 실행 신원 유지, 약 977 프레임과 두 음원 6회 수신, A의 검증된 `completed`→ENDED를 확인했다(`/tmp/wbb-07a2-root-final-barrier.log`). 60초 관리 중단에서도 STOPPING/미완료를 유지하고 FFmpeg를 종료한 뒤 재개 시 증거를 저장하고 ENDED로 전이했다(`/tmp/wbb-07a2-root-final-long-outage.log`).
+
+## 후속 검증기 리뷰
+
+초기 두 방송 검증기는 B의 hold 전체 누적 프레임과 최대 12초 정지만 확인해 A 장벽의 6초 사이에 B가 멈춰도 통과할 수 있었다. A의 정확한 hold 시작·끝 시간에 B의 250ms 영상·두 음원 샘플을 정렬하는 검사로 바꾸고, 7초 중단 fixture가 실패하는 것을 확인했다. 실제 `before_session_initialize` 재실행에서 겹치는 샘플 29개, 최대 관측 간격 252ms, 각 구간의 영상 진행과 두 음원 유지가 기록됐다(`/tmp/wbb-07a2-aligned-barrier-v2.log`). 조정자 최종 독립 재실행도 겹치는 샘플 30개와 최대 251ms 간격으로 통과했다(`/tmp/wbb-07a2-root-aligned-final.log`). 부분 초기화·timeout·부분 Compose 종료의 소유 자원 정리를 구현자 실패 주입과 조정자 Python 4개·Node 2개 검사로 확인했다. 후속 변경에 대한 독립 Spec/Standards 리뷰의 확정 제품 결함은 0건이다.

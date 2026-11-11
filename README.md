@@ -20,7 +20,7 @@
 | `deploy/` | 배포 구성 (Caddy/k3s, 추후 확장) |
 | `docs/`, `.scratch/` | 설계 문서와 티켓 (Codex 관리) |
 
-데이터 저장: PostgreSQL(원장) + Redis(세션 활성 sid 캐시·rate limit). 인증 미디어 서버의 전용 로컬 검증은 [실행 안내](experiments/local-secure-media/README.md)를 따릅니다. Kafka는 후속 단계입니다.
+데이터 저장: PostgreSQL(원장) + Redis(세션 활성 sid 캐시·rate limit). 인증 미디어 서버의 전용 로컬 검증은 [실행 안내](experiments/local-secure-media/README.md)를 따릅니다. Kafka outbox 전달은 로컬 구현·독립 검증을 마쳤으며 [07-C 검증 기록](docs/verification/07c-outbox-delivery.md)을 참고합니다. Kafka 소비와 재조정 연결은 후속07-B 범위입니다.
 
 ## 사전 요구
 

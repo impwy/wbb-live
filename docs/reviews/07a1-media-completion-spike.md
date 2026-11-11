@@ -75,3 +75,20 @@ RTSP 범위 보완안은 source 읽기·720p 출력 발행을 HTTP 인증의 프
 - B lifecycle tuple/epoch 전후 일치와 A FFmpeg 실제 종료·출력 정리 관측이 아직 없다. MediaMTX operation 완료와 전체 제품 정리를 구분해 보완한다.
 
 위 수정은 지정 구현자에게 전달했다. 정상 두 방송 검사와 아직 없는 장벽별 실제 미디어·응답 유실·프로세스 장애 매트릭스를 합쳐 완료로 주장하지 않는다.
+
+## 고정 스냅샷 두 축 중간 리뷰
+
+기준은 upstream `9540cb6c1d9f1e9351fcc4ded3afc249ffff22bc` 대비 패치 `ac005b02f922b3a3dba7d3bac698c6c67363b0402510062d9bf1d6734af93ca1`다. 서로 독립인 새 리뷰 문맥으로 registry/HTTP/bootstrap 수명을 검토했다. 이후 변경에 대한 최종 승인이나 실행 검증이 아니다.
+
+### Standards
+
+- 내부 HMAC 헤더 `X-WBB-Signature`가 원본 `httpp.RequestForLog`의 redaction 목록에 없어 debug 설정 시 노출된다. 기본 info 설정에서의 누출을 확인한 것은 아니다. AGENTS의 인증 정보 로그 금지에 맞춰 신규 자격과 SDP/응답 자격이 기록되지 않도록 수정·검증해야 한다.
+- `core.New`의 createResources 실패 정리는 정상 run 종료와 달리 먼저 AbortBarriers를 호출하지 않는다. 이미 열린 listener로 들어온 인증된 실험 요청이 명시 장벽에 멈춘 상태에서 뒤 리소스 기동이 실패하면 closeResources가 기다릴 수 있다. 초기화 실패에도 전체 abort 후 정리를 수행하고 회귀 검증해야 한다. 정적 경합 추론이며 실제 장애 재현은 아직 없다.
+
+### Spec
+
+검토 범위에서 추가 확정 correctness 결함은 발견하지 못했다. 명시 bootstrap, 같은 inode flock과 재검사, fsync·rename·디렉터리 fsync, 프로세스 수명 FD 보존, 과거 정확한 epoch 조회, capacity_unknown과 닫힌 표식 보존을 확인했다. 현재 프로세스 검사는 Open 완료 후 helper 종료를 검사하므로 실제 Linux MediaMTX의 각 부트 경계 종료·손상·빈 기존 볼륨·HTTP 포화·재시작을 대신하지 않는다. 해당 인수는 미완료다.
+
+두 축 결과: Standards 수정 항목2건, Spec 추가 확정 결함0건과 실행 증거 미완료. 구현자에게 전달했으며 수정 확인·독립 재검증 전 해결 완료로 표시하지 않는다.
+
+후속 `10958cb7` 정적 확인에서 debug/packet dump 설정 거절, 서명 헤더 마스킹 및 대소문자 정규화, Core 시작 실패 시 장벽 abort 순서를 확인했다. debug 차단은 인증 callback JSON의 password/token 로그 경로도 함께 막는다. 내부 WebRTC.Initialize의 HTTP 개방 후 UDP/TCP 실패 정리에는 별도 대기 가능성이 남아 구현자에게 추가 전달했다. 해당 경합 실행은 아직 없다.

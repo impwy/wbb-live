@@ -56,3 +56,7 @@
 구현자의 자원 조작 중단과 인계를 확인한 뒤 패치 `ac005b02f922b3a3dba7d3bac698c6c67363b0402510062d9bf1d6734af93ca1`, 실행 이미지 `sha256:77d6eaf0442fa9d1242866b6d2aff28c4ee3f1283e6408dcaaa98ad3608e55a4`에서 `node verify-boundary.mjs`를 독립 실행했다(종료 코드 0). 설정 쓰기 차단 5/5, 혼합 자격 거절 2/2, 4xx·중복·close, 등록 전·세션 초기화 전·인증 중 장벽 모두 통과했다. 인증 중에는 close 뒤 closing, release 뒤 completed 및 늦은 POST 409를 검사했다. 검사 후 별도 인증 API 조회로 WebRTC 세션·RTSP 세션·경로 모두 0, 각 목록 페이지 수 0을 확인했다.
 
 불완전 SDP를 이용한 HTTP 제어 검사로 한정한다. 실제 RTP·FFmpeg·HLS와 AddPublisher/응답 유실/프로세스 종료 전체 매트릭스는 아직 미완료다. 검사 전 해시 기록 명령은 작업 디렉터리 상대 경로 오류로 실패했으며 검사 자체는 정상 실행됐다. 인계 시 패치 해시와 검사 후 해시는 동일했고, 별도 파일별 해시는 검사 후 기록했다.
+
+## 2026-11-11 로그 보호 수정 독립 검사
+
+조정자가 패치 `10958cb7183ecd5d7d7b7c2bb584575b753b385fcaea850757856ffa3d801a57`를 별도 깨끗한 원본에 적용해 generate, registry/WebRTC 기초 race 검사와 HTTP 로그 마스킹 race 검사, core/api/bootstrap 빌드를 실행했다. 모두 종료 코드0이며 세 패키지는 각각1.918초·2.096초·2.683초였다. 선택 검사식에 `RequestForLog`를 포함해 대소문자별 내부 서명 마스킹 회귀를 실행했다. macOS 호스트 검사이며 Linux debug/dump 설정 거절이나 실제 기동 실패 경합 실행 증거를 대신하지 않는다. 이후 추가된 미추적 core 회귀 파일 및 WebRTC 내부 초기화 실패 보완은 이 패치 결과에 포함되지 않는다.

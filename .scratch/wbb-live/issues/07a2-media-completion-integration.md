@@ -24,6 +24,15 @@
 
 전송한 작업의 최종 closed 기록은 검증된 증거를 조건으로 하는 단일 서비스 경로로 모은다. ENDED 전이 트랜잭션에서도 전체 작업·generation·실행 종료 조건을 재검사한다. 공개 DELETE의 응답이 종료 요청 수락인지 실제 완료인지 API 문서와 클라이언트 동작을 일치시킨다. 기존 closed 이력을 새 계약으로 검증된 기록으로 재분류하지 않는다. 기존 migration 파일을 수정하지 않고 새 migration을 추가한다.
 
+## 07-A1 계약을 제품에 연결할 때 확인할 항목
+
+- 고정 패치의 내부 응답에는 `contract_version`, `root`, `slot`, `epoch`, `epoch_sequence`, `operation`, `state`, `registered`, `sequence`가 있다. 클라이언트는 누락·범위 밖 값·요청과 다른 tuple을 오류로 취급한다. `never-registered`, `closing`, `active`, `unknown_epoch`, `capacity_unknown`는 종료 증거가 아니다. `completed`만 해당 tuple에 대한 후보 증거다.
+- 새 작업은 검증된 lifecycle의 tuple과 실제 전송할 SDP SHA-256을 원본 operation ID 및 경로와 함께 DB에 먼저 고정한다. `publish` HMAC은 `root`, `slot`, `epoch`, operation ID, 정확한 경로와 SDP digest에 묶는다. `close`와 `query`는 저장된 epoch·operation ID로 서명한다. 관리 응답의 epoch는 조회 대상과 달리 현재 실행일 수 있으므로 계약에서 지정한 필드별 의미를 검사한다.
+- 프로세스가 lifecycle 조회 직후 바뀌면 이전 epoch의 POST는 거절될 수 있다. 예약한 작업의 epoch를 현재 값으로 다시 쓰지 않고, 그 이전 epoch가 실제 이력에 있으며 종료됐다는 응답을 확인해 정리한다. 키·slot·root 불일치, 이력 손상, 빈 기존 볼륨과 관리 API 오류는 서비스 준비 실패 또는 STOPPING 유지로 처리한다.
+- `MarkDispatched`와 Stop은 session 행 잠금으로 직렬화한다. Stop이 먼저 commit하면 dispatch를 시작하지 않는다. dispatch가 먼저 commit했으면 Stop 이후 저장된 tuple로 close를 재시도한다. close가 Begin보다 먼저 도착하면 늦은 POST를 봉쇄하고, 이미 진행 중인 생성은 완료 증거가 나올 때까지 추적한다. 네트워크 요청은 트랜잭션 밖에서 보낸다. 요청 컨텍스트 취소나 HTTP 4xx는 dispatch된 작업을 closed로 바꾸지 않는다.
+- 기존 `attached` resource DELETE와 worker의 경로 킥은 물리 정리 수단이다. HTTP 200/204/404, 최신 목록 부재, 5초 타이머만으로 operation을 closed로 만들지 않는다. 작업 완료 응답을 검증해 DB에 귀속·증거를 먼저 저장하고, FFmpeg 프로세스 그룹 및 새 미디어 snapshot의 정리를 확인한 후 ENDED를 결정한다.
+- 구형 기록에는 새 tuple을 소급 생성하지 않는다. 특히 요청이 시작된 구형 미완료 작업은 unknown으로 남겨 운영자가 별도 근거를 확보하게 한다. 새 마이그레이션은 기존 DB 자료와 현재 실행 서비스를 안전하게 보존해야 한다.
+
 ## 완료 기준과 검증
 
 - 공개 HTTP API + 실제 PostgreSQL + 고정 패치 Linux 미디어 환경에서 검사한다. 구현 내부 helper만 호출한 테스트로 대체하지 않는다.

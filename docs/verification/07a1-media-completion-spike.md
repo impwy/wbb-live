@@ -66,3 +66,7 @@
 2026-11-11 조정자는 패치 SHA-256 `cc9992059e50da3c19c5126076091008cb1c14706454fee9c66ec3f753b95478`로 전용 Linux/arm64 이미지를 새로 빌드했다(이미지 `sha256:ae05db61560f010ea13738916bb2f9f7dabb8f5f3b772d304c602e73f9446ce3`). 전용 미디어·인증 컨테이너만 해당 이미지로 재생성하고 `node verify-media.mjs`를 독립 실행했다. 종료 코드0, 두 소스 준비, A의 정확한 operation completed·FFmpeg exit0·미디어 부재, B active·동일 FFmpeg 신원·동일 lifecycle/epoch, B 연속9개 관측점 중 영상 증가8구간·새 ingress 바이트8구간·205프레임/6.862초 증가와 음성 두 주파수 확인, 전체 cleanup 검증을 로그 `/tmp/wbb-root-07a1-final-smoke.log`에서 확인했다.
 
 검사 후 별도 관리 API에서 WebRTC 세션0, RTSP 세션0, 경로0을 조회했고 실험 소유 FFmpeg 컨테이너0, 기존 helper8090 HTTP200을 확인했다. 이 결과는 **정상 두 방송 스모크**의 독립 증거다. 응답 유실·장벽·프로세스 장애 전체 매트릭스의 동결 패치 독립 재실행과 설정 watcher 무변경 관측, 제품 DB·worker 통합은 아직 미완료다.
+
+동일 패치·이미지에서 조정자가 `node verify-media.mjs before_add_publisher`를 독립 실행해 종료 코드0을 확인했다. AddPublisher 직전 장벽의 A는 해제 후 completed·미디어 부재, B는 active·FFmpeg 신원과 lifecycle tuple 유지였다. B의 9개 관측점에서 영상 증가 8구간, ingress 증가 8구간, 204프레임/6.843초 증가, 전체 cleanup 통과를 `/tmp/wbb-root-07a1-final-before-add.log`에 기록했다.
+
+동일 패치·이미지에서 `node verify-media.mjs cancel_post`도 독립 실행해 종료 코드0을 확인했다. 완료 응답 전 장벽에서 A의 POST 응답을 유실한 뒤 A completed·미디어 부재, B active·FFmpeg 신원과 lifecycle tuple 유지였다. B의 9개 관측점에서 영상 증가 8구간, ingress 증가 8구간, 205프레임/6.862초 증가, 전체 cleanup 통과를 `/tmp/wbb-root-07a1-final-cancel-post.log`에 기록했다. 두 검사는 현재 패치의 특정 경합 증거이며, 정적 리뷰에서 발견한 설정 우회·검증기 cleanup·이력 무결성 결함이 수정되기 전에는 07-A1 전체 통과로 분류하지 않는다.

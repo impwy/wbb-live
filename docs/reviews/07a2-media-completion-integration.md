@@ -16,3 +16,7 @@ MediaMTX 관리 서명은 `WBB_COMPLETION_KEY_HEX`를 32바이트로 해석한 �
 A1 서명은 각 UTF-8 part의 바이트 길이와 `:`를 이어 HMAC-SHA256 hex로 만든다. publish의 path는 앞 `/`와 뒤 `/whip`이 없는 실제 source 경로, digest는 전송 SDP의 SHA-256이다. 과거 epoch의 `completed`는 `registered=false`여도 유효하고 close 응답은 HTTP 200이다(현재 epoch close는202, query는200). lifecycle의 일반 operation `sequence=0`은 유효하며 `epoch_sequence`만 양수다. 반환 tuple의 필드 누락과 타입 오류는 거절해야 한다. 이 차이를 무시한 응답 검증은 재시작 후 정상 완료를 영원히 미완료로 만들거나 잘못된 종료를 허용할 수 있다.
 
 완료 리뷰는 구현자의 동결 해시와 공개 HTTP·실제 PostgreSQL·고정 Linux 미디어 검증 이후 두 축으로 다시 수행한다.
+
+## 구현 중 확인한 회복 경합
+
+초기 worker 변경은 5초 부재로 operation을 closed 처리하는 경로와 함께, 이전 worker run의 `state='exited'` 영속 갱신도 제거했다. 새 `completionReady`는 모든 run이 exited여야 ENDED를 허용하므로 worker 재시작 후 inherited 이전 run이 실제로 정리돼도 상태가 running/starting에 남아 STOPPING이 지속될 수 있다. lock·lease·프로세스 신원·최신 자원 근거를 확인한 뒤 정확한 run ID/fence/generation으로 exited를 기록하는 회복 경로와 실제 재시작 검사를 지정 구현자에게 요청했다. 수정·재검증 전의 지적이다.

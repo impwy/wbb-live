@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
+	"github.com/impwy/wbb-live/wbb-backend/internal/mediacompletion"
 )
 
 type PublishOperation struct {
@@ -101,11 +102,6 @@ func (s *Service) LookupResource(ctx context.Context, actor Actor, sessionID, op
 	}
 	res.SessionID, res.OperationID, res.State = sessionID, operationID, sessionState
 	return res, nil
-}
-
-func (s *Service) CloseResource(ctx context.Context, operationID string) error {
-	_, err := s.db.Exec(ctx, `UPDATE media_create_operations SET state='closed',resolved_at=now() WHERE id=$1 AND state IN ('attached','cleanup_pending')`, operationID)
-	return err
 }
 
 // ReservePublish consumes a single-purpose grant and commits a durable create
@@ -230,24 +226,54 @@ func (s *Service) AttachPublish(ctx context.Context, op PublishOperation, upstre
 	return nil
 }
 
-func (s *Service) CloseFailedPublish(ctx context.Context, op PublishOperation) error {
-	_, err := s.db.Exec(ctx, `UPDATE media_create_operations SET state='closed',resolved_at=now() WHERE id=$1 AND broadcast_session_id=$2 AND state='pending'`, op.ID, op.SessionID)
-	return err
-}
-
 // MarkDispatched must commit before the first upstream byte is sent. A
 // STOPPING race returns conflict, so a late POST cannot begin after stop.
-func (s *Service) MarkDispatched(ctx context.Context, op PublishOperation) error {
-	result, err := s.db.Exec(ctx, `UPDATE media_create_operations o SET request_started_at=now() FROM broadcast_sessions s
-		WHERE o.id=$1 AND o.broadcast_session_id=s.id AND o.state='pending' AND o.request_started_at IS NULL
-		AND s.state='starting' AND s.media_generation=o.media_generation`, op.ID)
+func (s *Service) MarkDispatched(ctx context.Context, op PublishOperation, tuple mediacompletion.Tuple, path, digest string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var bid, fid string
+	err = tx.QueryRow(ctx, `SELECT broadcast_id::text,publisher_auth_family_id::text FROM broadcast_sessions WHERE id=$1`, op.SessionID).Scan(&bid, &fid)
+	if err != nil {
+		return err
+	}
+	var locked string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM auth_session_families WHERE id=$1 FOR UPDATE`, fid).Scan(&locked); err != nil {
+		return err
+	}
+	if err = lockBroadcast(ctx, tx, bid, ""); err != nil {
+		return err
+	}
+	sess, err := getSession(ctx, tx, bid, op.SessionID, true)
+	if err != nil {
+		return err
+	}
+	if sess.State != "starting" {
+		return ErrConflict
+	}
+	var generation int64
+	err = tx.QueryRow(ctx, `SELECT media_generation FROM broadcast_sessions WHERE id=$1`, op.SessionID).Scan(&generation)
+	if err != nil {
+		return err
+	}
+	if generation != op.Generation {
+		return ErrConflict
+	}
+	result, err := tx.Exec(ctx, `UPDATE media_create_operations SET request_started_at=now(),
+		completion_contract_version=$3,completion_root=$4,completion_slot=$5,completion_epoch=$6,
+		completion_epoch_sequence=$7,completion_source_path=$8,completion_sdp_sha256=$9
+		WHERE id=$1 AND broadcast_session_id=$2 AND media_generation=$10 AND state='pending'
+		AND request_started_at IS NULL AND completion_epoch IS NULL AND NOT completion_legacy`,
+		op.ID, op.SessionID, tuple.ContractVersion, tuple.Root, tuple.Slot, tuple.Epoch, tuple.Sequence, path, digest, op.Generation)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() != 1 {
 		return ErrConflict
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) AbandonPublish(ctx context.Context, op PublishOperation) error {

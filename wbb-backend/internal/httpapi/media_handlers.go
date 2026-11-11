@@ -101,6 +101,10 @@ func (s *Server) handleWHIPPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusServiceUnavailable, "media_unavailable", "Media is not configured.")
 		return
 	}
+	if s.completion == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "media_unavailable", "Media completion is not configured.")
+		return
+	}
 	storeCtx, storeCancel := context.WithTimeout(r.Context(), time.Second)
 	defer storeCancel()
 	if err := s.redis.Ping(storeCtx).Err(); err != nil {
@@ -117,12 +121,21 @@ func (s *Server) handleWHIPPost(w http.ResponseWriter, r *http.Request) {
 		writeDomainError(w, r, err)
 		return
 	}
-	if err := s.sessions.MarkDispatched(r.Context(), op); err != nil {
+	path := fmt.Sprintf("wbb/%s/%d/source", op.SessionID, op.Generation)
+	digestBytes := sha256.Sum256(body)
+	digest := hex.EncodeToString(digestBytes[:])
+	tuple, err := s.completion.Lifecycle(r.Context())
+	if err != nil {
+		s.abandonMediaOperation(op)
+		writeError(w, r, 503, "media_unavailable", "Media completion is unavailable.")
+		return
+	}
+	if err := s.sessions.MarkDispatched(r.Context(), op, tuple, path, digest); err != nil {
 		writeDomainError(w, r, err)
 		return
 	}
-	path := fmt.Sprintf("/wbb/%s/%d/source/whip", op.SessionID, op.Generation)
-	upstreamURL := strings.TrimSuffix(s.cfg.MediaWHIPURL, "/") + path
+	whipPath := "/" + path + "/whip"
+	upstreamURL := strings.TrimSuffix(s.cfg.MediaWHIPURL, "/") + whipPath
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, strings.NewReader(string(body)))
 	if err != nil {
 		s.abandonMediaOperation(op)
@@ -130,6 +143,11 @@ func (s *Server) handleWHIPPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/sdp")
+	if err := s.completion.PublishHeaders(request.Header, tuple, op.ID, path, digest); err != nil {
+		s.abandonMediaOperation(op)
+		writeError(w, r, 503, "media_unavailable", "Media completion is unavailable.")
+		return
+	}
 	request.SetBasicAuth("create."+op.ID, mediaCredential(s.cfg.MediaSecret, "create", op.ID))
 	response, err := s.mediaClient.Do(request)
 	if err != nil {
@@ -139,11 +157,7 @@ func (s *Server) handleWHIPPost(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusCreated {
-		if response.StatusCode >= 400 && response.StatusCode < 500 {
-			_ = s.sessions.CloseFailedPublish(r.Context(), op)
-		} else {
-			s.abandonMediaOperation(op)
-		}
+		s.abandonMediaOperation(op)
 		writeError(w, r, 502, "media_error", "Media signaling failed.")
 		return
 	}
@@ -154,7 +168,7 @@ func (s *Server) handleWHIPPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsed, _ := url.Parse(s.cfg.MediaWHIPURL)
-	upstreamPath, err := checkedUpstreamLocation(response.Header.Get("Location"), path, parsed.Host)
+	upstreamPath, err := checkedUpstreamLocation(response.Header.Get("Location"), whipPath, parsed.Host)
 	if err != nil {
 		s.abandonMediaOperation(op)
 		writeError(w, r, 502, "media_error", "Invalid media resource.")
@@ -235,12 +249,8 @@ func (s *Server) handleWHIPResource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, 502, "media_error", "Media cleanup failed.")
 			return
 		}
-		if err = s.sessions.CloseResource(r.Context(), res.OperationID); err != nil {
-			writeDomainError(w, r, err)
-			return
-		}
 		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(204)
+		w.WriteHeader(202)
 		return
 	}
 	if resp.StatusCode != 204 {

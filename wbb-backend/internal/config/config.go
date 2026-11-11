@@ -6,6 +6,7 @@ package config
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -26,13 +27,17 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
-	CORSOrigins        []string
-	StaticDir          string
-	MediaWHIPURL       string // private MediaMTX signaling base, empty disables media
-	MediaSecret        []byte // shared only within the isolated media network
-	GoogleClientID     string
-	GoogleClientSecret string
-	GoogleCallbackURI  string
+	CORSOrigins         []string
+	StaticDir           string
+	MediaWHIPURL        string // private MediaMTX signaling base, empty disables media
+	MediaSecret         []byte // shared only within the isolated media network
+	MediaCompletionURL  string // private, versioned completion management origin
+	MediaCompletionRoot string
+	MediaCompletionSlot string
+	MediaCompletionKey  []byte // raw HMAC key, distinct from MediaSecret
+	GoogleClientID      string
+	GoogleClientSecret  string
+	GoogleCallbackURI   string
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -59,6 +64,9 @@ func Load() (Config, error) {
 		StaticDir:                os.Getenv("WBB_STATIC_DIR"),
 		MediaWHIPURL:             os.Getenv("WBB_MEDIA_WHIP_URL"),
 		MediaSecret:              []byte(os.Getenv("WBB_MEDIA_SECRET")),
+		MediaCompletionURL:       os.Getenv("WBB_COMPLETION_URL"),
+		MediaCompletionRoot:      os.Getenv("WBB_COMPLETION_ROOT"),
+		MediaCompletionSlot:      os.Getenv("WBB_COMPLETION_SLOT"),
 		GoogleClientID:           os.Getenv("WBB_GOOGLE_CLIENT_ID"),
 		GoogleClientSecret:       os.Getenv("WBB_GOOGLE_CLIENT_SECRET"),
 		GoogleCallbackURI:        os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
@@ -76,6 +84,15 @@ func Load() (Config, error) {
 		}
 		if len(cfg.MediaSecret) < 32 {
 			return cfg, errors.New("WBB_MEDIA_SECRET must be at least 32 bytes when media is enabled")
+		}
+		key, err := hex.DecodeString(os.Getenv("WBB_COMPLETION_KEY_HEX"))
+		if err != nil || len(key) != 32 {
+			return cfg, errors.New("WBB_COMPLETION_KEY_HEX must encode exactly 32 bytes when media is enabled")
+		}
+		cfg.MediaCompletionKey = key
+		completion, err := url.Parse(cfg.MediaCompletionURL)
+		if err != nil || completion.Scheme != "http" || completion.Hostname() == "" || completion.User != nil || (completion.Path != "" && completion.Path != "/") || completion.RawQuery != "" || completion.Fragment != "" || cfg.MediaCompletionRoot == "" || cfg.MediaCompletionSlot == "" {
+			return cfg, errors.New("private WBB_COMPLETION_URL, ROOT and SLOT are required when media is enabled")
 		}
 	}
 	googleCount := 0

@@ -215,6 +215,25 @@ func newTestServerWithGoogle(t *testing.T, googleClient *http.Client, opts ...se
 	for _, o := range opts {
 		o(&cfg)
 	}
+	if cfg.MediaWHIPURL != "" && cfg.MediaCompletionURL == "" {
+		// The existing public HTTP tests use a private completion fixture. It
+		// supplies a pinned lifecycle; the upstream fixture still observes the
+		// signed publish request sent by the product handler.
+		const testEpoch = "0123456789abcdef0123456789abcdef"
+		completion := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/v3/wbb/lifecycle" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"contract_version":"wbb-media-completion/1","root":"test-root","slot":"test-slot","epoch":"`+testEpoch+`","epoch_sequence":1,"sequence":0}`)
+		}))
+		t.Cleanup(completion.Close)
+		cfg.MediaCompletionURL = completion.URL
+		cfg.MediaCompletionRoot = "test-root"
+		cfg.MediaCompletionSlot = "test-slot"
+		cfg.MediaCompletionKey = []byte("test-only-completion-hmac-key-32-bytes")
+	}
 
 	// The server's own origin is always allowed so "same-origin browser"
 	// requests work; tests add extra origins via withCORSOrigins.

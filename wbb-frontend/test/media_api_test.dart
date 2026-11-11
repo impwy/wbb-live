@@ -55,7 +55,7 @@ void main() {
               },
             );
           }
-          if (request.method == 'DELETE') return http.Response('', 204);
+          if (request.method == 'DELETE') return http.Response('', 202);
           fail('unexpected ${request.method} ${request.url}');
         }),
       );

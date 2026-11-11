@@ -525,7 +525,10 @@ class ApiClient {
       etag: resource.etag,
       auth: true,
     );
-    if (response.statusCode != 204 && response.statusCode != 404) {
+    // 202 accepts the stop request; only the session state can confirm ENDED.
+    if (response.statusCode != 202 &&
+        response.statusCode != 204 &&
+        response.statusCode != 404) {
       throw ApiException(
         response.statusCode,
         'whip_delete_failed',

@@ -81,6 +81,10 @@ func TestWHIPRejectsMalformedClaimsAndRedisOutage(t *testing.T) {
 	if control.status != 502 || reached.Load() != 1 {
 		t.Fatalf("valid grant did not reach upstream: status=%d calls=%d", control.status, reached.Load())
 	}
+	var state, epoch string
+	if err := testPool.QueryRow(t.Context(), `SELECT state,COALESCE(completion_epoch,'') FROM media_create_operations WHERE broadcast_session_id=$1`, sid).Scan(&state, &epoch); err != nil || state == "closed" || epoch == "" {
+		t.Fatalf("upstream 4xx prematurely closed or lost pinned tuple: state=%s tuple=%t err=%v", state, epoch != "", err)
+	}
 }
 
 func TestWHIPLateCreatedResourceIsNotExposedAfterStop(t *testing.T) {
@@ -146,12 +150,13 @@ func TestWHIPLateCreatedResourceIsNotExposedAfterStop(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("late resource DELETE not attempted")
 	}
-	var state string
-	if err := testPool.QueryRow(context.Background(), `SELECT state FROM media_create_operations WHERE broadcast_session_id=$1`, sid).Scan(&state); err != nil {
+	var state, epoch, digest string
+	var dispatched bool
+	if err := testPool.QueryRow(context.Background(), `SELECT state,COALESCE(completion_epoch,''),COALESCE(completion_sdp_sha256,''),request_started_at IS NOT NULL FROM media_create_operations WHERE broadcast_session_id=$1`, sid).Scan(&state,&epoch,&digest,&dispatched); err != nil {
 		t.Fatal(err)
 	}
-	if state != "cleanup_pending" {
-		t.Fatalf("operation=%s", state)
+	if state != "cleanup_pending" || len(epoch)!=32 || len(digest)!=64 || !dispatched {
+		t.Fatalf("late operation state=%s pinned=%t digest=%t dispatched=%t", state,len(epoch)==32,len(digest)==64,dispatched)
 	}
 	if strings.Contains(result.header.Get("Location"), "late") {
 		t.Fatal("late resource leaked")

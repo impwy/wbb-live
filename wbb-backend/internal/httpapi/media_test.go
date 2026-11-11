@@ -73,59 +73,67 @@ func TestWHIPCreateReservesAndReturnsOpaqueResource(t *testing.T) {
 }
 
 func TestWHIPResourceRequiresOriginalFamilyAfterRefresh(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			w.Header().Set("Content-Type", "application/sdp")
-			w.Header().Set("Location", r.URL.Path+"/media-resource")
-			w.Header().Set("ETag", `"ice-1"`)
-			w.WriteHeader(201)
-			_, _ = w.Write([]byte("v=0\r\nanswer"))
-		case http.MethodPatch:
-			if r.Header.Get("If-Match") != `"ice-1"` {
-				t.Errorf("lost ETag: %s", r.Header.Get("If-Match"))
+	for _, deleteStatus := range []int{http.StatusOK, http.StatusNoContent, http.StatusNotFound} {
+		t.Run(http.StatusText(deleteStatus), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodPost:
+					w.Header().Set("Content-Type", "application/sdp")
+					w.Header().Set("Location", r.URL.Path+"/media-resource")
+					w.Header().Set("ETag", `"ice-1"`)
+					w.WriteHeader(201)
+					_, _ = w.Write([]byte("v=0\r\nanswer"))
+				case http.MethodPatch:
+					if r.Header.Get("If-Match") != `"ice-1"` {
+						t.Errorf("lost ETag: %s", r.Header.Get("If-Match"))
+					}
+					w.WriteHeader(204)
+				case http.MethodDelete:
+					w.WriteHeader(deleteStatus)
+				}
+			}))
+			defer upstream.Close()
+			ts := newTestServer(t, func(c *config.Config) {
+				c.MediaWHIPURL = upstream.URL
+				c.MediaSecret = []byte("test-only-media-secret-at-least-32-bytes")
+			})
+			owner := newJarClient(t)
+			email := uniqueEmail()
+			_, access, refresh := registerAndLogin(t, ts, owner, email)
+			otherLogin := newJarClient(t)
+			_, otherAccess, _ := loginUser(t, ts, otherLogin, email)
+			b := createBroadcast(t, ts, access, "리소스 인가")
+			base := ts.URL + "/api/v1/broadcasts/" + b["id"].(string)
+			started := startSession(t, owner, base, access, "screen", "resource-auth-0001")
+			sid := started.body["session"].(map[string]any)["id"].(string)
+			grant := started.body["publishGrant"].(map[string]any)["token"].(string)
+			created := postWHIP(t, ts.URL+"/api/v1/live-sessions/"+sid+"/whip", grant, ts.URL, "application/sdp")
+			if created.status != 201 {
+				t.Fatalf("create %d", created.status)
 			}
-			w.WriteHeader(204)
-		case http.MethodDelete:
-			w.WriteHeader(204)
-		}
-	}))
-	defer upstream.Close()
-	ts := newTestServer(t, func(c *config.Config) {
-		c.MediaWHIPURL = upstream.URL
-		c.MediaSecret = []byte("test-only-media-secret-at-least-32-bytes")
-	})
-	owner := newJarClient(t)
-	email := uniqueEmail()
-	_, access, refresh := registerAndLogin(t, ts, owner, email)
-	otherLogin := newJarClient(t)
-	_, otherAccess, _ := loginUser(t, ts, otherLogin, email)
-	b := createBroadcast(t, ts, access, "리소스 인가")
-	base := ts.URL + "/api/v1/broadcasts/" + b["id"].(string)
-	started := startSession(t, owner, base, access, "screen", "resource-auth-0001")
-	sid := started.body["session"].(map[string]any)["id"].(string)
-	grant := started.body["publishGrant"].(map[string]any)["token"].(string)
-	created := postWHIP(t, ts.URL+"/api/v1/live-sessions/"+sid+"/whip", grant, ts.URL, "application/sdp")
-	if created.status != 201 {
-		t.Fatalf("create %d", created.status)
-	}
-	resourceURL := ts.URL + created.header.Get("Location")
-	if got := sendWHIPResource(t, http.MethodPatch, resourceURL, otherAccess, ts.URL, `"ice-1"`); got != 403 {
-		t.Fatalf("other login PATCH=%d", got)
-	}
-	if got := sendWHIPResource(t, http.MethodDelete, resourceURL, otherAccess, ts.URL, ""); got != 403 {
-		t.Fatalf("other login DELETE=%d", got)
-	}
-	rotated := refreshWithToken(t, ts, refresh)
-	if rotated.status != 200 {
-		t.Fatalf("refresh=%d", rotated.status)
-	}
-	refreshedAccess := rotated.body["accessToken"].(string)
-	if got := sendWHIPResource(t, http.MethodPatch, resourceURL, refreshedAccess, ts.URL, `"ice-1"`); got != 204 {
-		t.Fatalf("original PATCH=%d", got)
-	}
-	if got := sendWHIPResource(t, http.MethodDelete, resourceURL, refreshedAccess, ts.URL, ""); got != 204 {
-		t.Fatalf("original DELETE=%d", got)
+			resourceURL := ts.URL + created.header.Get("Location")
+			if got := sendWHIPResource(t, http.MethodPatch, resourceURL, otherAccess, ts.URL, `"ice-1"`); got != 403 {
+				t.Fatalf("other login PATCH=%d", got)
+			}
+			if got := sendWHIPResource(t, http.MethodDelete, resourceURL, otherAccess, ts.URL, ""); got != 403 {
+				t.Fatalf("other login DELETE=%d", got)
+			}
+			rotated := refreshWithToken(t, ts, refresh)
+			if rotated.status != 200 {
+				t.Fatalf("refresh=%d", rotated.status)
+			}
+			refreshedAccess := rotated.body["accessToken"].(string)
+			if got := sendWHIPResource(t, http.MethodPatch, resourceURL, refreshedAccess, ts.URL, `"ice-1"`); got != 204 {
+				t.Fatalf("original PATCH=%d", got)
+			}
+			if got := sendWHIPResource(t, http.MethodDelete, resourceURL, refreshedAccess, ts.URL, ""); got != 202 {
+				t.Fatalf("original DELETE=%d", got)
+			}
+			var state string
+			if err := testPool.QueryRow(t.Context(), `SELECT state FROM media_create_operations WHERE broadcast_session_id=$1`, sid).Scan(&state); err != nil || state == "closed" {
+				t.Fatalf("DELETE acceptance prematurely closed operation: state=%s err=%v", state, err)
+			}
+		})
 	}
 }
 

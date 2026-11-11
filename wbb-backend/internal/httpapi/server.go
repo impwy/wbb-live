@@ -19,6 +19,7 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
 	"github.com/impwy/wbb-live/wbb-backend/internal/config"
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
+	"github.com/impwy/wbb-live/wbb-backend/internal/mediacompletion"
 	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
 )
 
@@ -33,6 +34,7 @@ type Server struct {
 	log          *slog.Logger
 	googleClient *http.Client
 	mediaClient  *http.Client
+	completion   *mediacompletion.Client
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
 	// production uses time.Now.
@@ -47,7 +49,11 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if cfg.MediaWHIPURL != "" {
 		sessions.EnableMedia()
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient()}
+	var completion *mediacompletion.Client
+	if cfg.MediaCompletionURL != "" {
+		completion, _ = mediacompletion.NewClient(strings.TrimSuffix(cfg.MediaCompletionURL, "/"), cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
+	}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), completion: completion}
 }
 
 // RunMaintenance reconciles durable preparation timeouts independently of
@@ -125,6 +131,18 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err != nil || latest != db.LatestEmbedded() {
 		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "Migrations are not up to date.")
 		return
+	}
+	if s.cfg.MediaWHIPURL != "" {
+		if s.completion == nil {
+			writeError(w, r, http.StatusServiceUnavailable, "not_ready", "Media completion is not configured.")
+			return
+		}
+		mediaCtx, mediaCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer mediaCancel()
+		if _, err := s.completion.Lifecycle(mediaCtx); err != nil {
+			writeError(w, r, http.StatusServiceUnavailable, "not_ready", "Media completion is unavailable.")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }

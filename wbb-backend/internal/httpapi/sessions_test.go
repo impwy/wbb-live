@@ -350,7 +350,7 @@ func TestUnresolvedCreateNeverBecomesEnded(t *testing.T) {
 	if current.body["session"].(map[string]any)["state"] != "stopping" {
 		t.Fatalf("unknown create was treated as absent: %v", current.body)
 	}
-	if _, err := testPool.Exec(t.Context(), `UPDATE media_create_operations SET state='closed',resolved_at=now() WHERE broadcast_session_id=$1`, sid); err != nil {
+	if _, err := testPool.Exec(t.Context(), `UPDATE media_create_operations SET state='closed',resolved_at=now(),completion_evidence_kind='never_sent' WHERE broadcast_session_id=$1 AND request_started_at IS NULL AND NOT completion_legacy`, sid); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(8 * time.Second)

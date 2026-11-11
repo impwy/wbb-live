@@ -1,0 +1,12 @@
+services:
+  api:
+    environment:
+      WBB_MEDIA_WHIP_URL: http://whip-proxy:8889
+    depends_on:
+      whip-proxy: {condition: service_started}
+  whip-proxy:
+    image: node:22-alpine
+    command: ["node", "/fixture/drop-first-whip-response.mjs"]
+    volumes:
+      - ./drop-first-whip-response.mjs:/fixture/drop-first-whip-response.mjs:ro
+    networks: [private]

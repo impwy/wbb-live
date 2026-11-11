@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/impwy/wbb-live/wbb-backend/internal/mediacompletion"
 	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +27,7 @@ import (
 type Worker struct {
 	DB                 *pgxpool.Pool
 	MTX                *MTXClient
+	Completion         *mediacompletion.Client
 	Secret             []byte
 	RTSPHost, LockFile string
 	Log                *slog.Logger
@@ -33,7 +35,6 @@ type Worker struct {
 	lockFile           *os.File
 	runs               map[string]*running
 	lostLease          map[string]bool
-	absentSince        map[string]time.Time
 }
 
 type running struct {
@@ -43,7 +44,7 @@ type running struct {
 }
 type sessionRow struct {
 	id, bid, state       string
-	generation           int64
+	generation, fence    int64
 	deadline             time.Time
 	firstIngress, lostAt *time.Time
 }
@@ -65,7 +66,7 @@ func credential(secret []byte, kind, id string) string {
 func ControlCredential(secret []byte) string { return credential(secret, "control", "api") }
 
 func (w *Worker) Run(ctx context.Context) error {
-	if len(w.Secret) < 32 || w.DB == nil || w.MTX == nil || w.MTX.WHIPBase == "" || w.RTSPHost == "" || w.LockFile == "" {
+	if len(w.Secret) < 32 || w.DB == nil || w.MTX == nil || w.Completion == nil || w.MTX.WHIPBase == "" || w.RTSPHost == "" || w.LockFile == "" {
 		return fmt.Errorf("incomplete worker configuration")
 	}
 	if w.Log == nil {
@@ -85,7 +86,6 @@ func (w *Worker) Run(ctx context.Context) error {
 	w.incarnation = randomUUID()
 	w.runs = make(map[string]*running)
 	w.lostLease = make(map[string]bool)
-	w.absentSince = make(map[string]time.Time)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -166,6 +166,10 @@ func (w *Worker) terminateLostRuns(ctx context.Context) error {
 		if err != nil || run.process.GroupAlive() {
 			w.Log.Error("unverified FFmpeg termination", "session", sid, "error", err)
 		} else {
+			if err := w.recordVerifiedRunExit(ctx, sid, run); err != nil {
+				w.Log.Error("verified FFmpeg exit not yet durable", "session", sid, "error", err)
+				return err
+			}
 			delete(w.runs, sid)
 		}
 		// Slow, failing per-session termination cannot starve healthy leases.
@@ -186,10 +190,10 @@ func (w *Worker) stopAll() {
 			continue
 		}
 		cancel()
-		if !run.process.GroupAlive() {
-			delete(w.runs, sid)
-			w.lostLease[sid] = true
-		}
+		// A database outage can prevent the verified exit from being recorded.
+		// Retain this exact run identity until the database recovers; dropping
+		// the handle would strand its row in running forever in this incarnation.
+		w.lostLease[sid] = true
 	}
 }
 
@@ -210,7 +214,7 @@ func (w *Worker) tick(ctx context.Context) error {
 		return err
 	}
 	queryCtx, queryCancel := context.WithTimeout(ctx, 4*time.Second)
-	rows, err := w.DB.Query(queryCtx, `SELECT id::text,broadcast_id::text,state,media_generation,prepare_deadline,first_ingress_at,ingress_lost_at FROM broadcast_sessions WHERE state IN ('starting','live','stopping') ORDER BY created_at`)
+	rows, err := w.DB.Query(queryCtx, `SELECT id::text,broadcast_id::text,state,media_generation,media_fencing_token,prepare_deadline,first_ingress_at,ingress_lost_at FROM broadcast_sessions WHERE state IN ('starting','live','stopping') ORDER BY created_at`)
 	if err != nil {
 		queryCancel()
 		return err
@@ -218,7 +222,7 @@ func (w *Worker) tick(ctx context.Context) error {
 	var sessions []sessionRow
 	for rows.Next() {
 		var s sessionRow
-		if err := rows.Scan(&s.id, &s.bid, &s.state, &s.generation, &s.deadline, &s.firstIngress, &s.lostAt); err != nil {
+		if err := rows.Scan(&s.id, &s.bid, &s.state, &s.generation, &s.fence, &s.deadline, &s.firstIngress, &s.lostAt); err != nil {
 			rows.Close()
 			queryCancel()
 			return err
@@ -466,8 +470,8 @@ func (w *Worker) transition(ctx context.Context, s sessionRow, next, reason stri
 		return err
 	}
 	var state string
-	var version, fence int64
-	if err := tx.QueryRow(ctx, `SELECT state,version,media_fencing_token FROM broadcast_sessions WHERE id=$1 FOR UPDATE`, s.id).Scan(&state, &version, &fence); err != nil {
+	var version, fence, generation int64
+	if err := tx.QueryRow(ctx, `SELECT state,version,media_fencing_token,media_generation FROM broadcast_sessions WHERE id=$1 FOR UPDATE`, s.id).Scan(&state, &version, &fence, &generation); err != nil {
 		return err
 	}
 	if requiredFence > 0 && fence != requiredFence {
@@ -481,6 +485,18 @@ func (w *Worker) transition(ctx context.Context, s sessionRow, next, reason stri
 	}
 	if next == "ended" && state != "stopping" {
 		return nil
+	}
+	if next == "ended" {
+		if generation != s.generation || fence != s.fence {
+			return nil
+		}
+		ready, err := w.completionReady(ctx, tx, s)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return nil
+		}
 	}
 	var ended any
 	if next == "ended" {
@@ -513,6 +529,29 @@ func (w *Worker) cleanup(ctx context.Context, s sessionRow, snap MediaSnapshot) 
 			}
 		}
 	}
+	operations, err := w.pendingOperations(ctx, s.id)
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	} else {
+		// Close is addressed by the durable operation ID even when a WHIP
+		// Location was lost. Its completed response is stored before process
+		// teardown or a final media snapshot can authorize ENDED.
+		if err := w.closeOperations(ctx, s, operations); err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+		}
+		for _, op := range operations {
+			if op.path == "" {
+				continue
+			}
+			user := "create." + op.id
+			if err := w.MTX.DeleteWHIP(ctx, op.path, source, user, credential(w.Secret, "create", op.id)); err != nil {
+				// Completion cancels the underlying operation. A failed legacy
+				// DELETE is still followed by a fresh, scoped resource snapshot;
+				// the DELETE response itself cannot prove completion or absence.
+				w.Log.Warn("WHIP resource delete deferred to completion and snapshot", "operation", op.id, "error", err)
+			}
+		}
+	}
 	if run := w.runs[s.id]; run != nil {
 		term, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		err := run.process.Terminate(term)
@@ -522,12 +561,8 @@ func (w *Worker) cleanup(ctx context.Context, s sessionRow, snap MediaSnapshot) 
 		} else if run.process.GroupAlive() {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("FFmpeg group still alive after termination"))
 		} else {
-			result, err := w.DB.Exec(ctx, `UPDATE media_worker_runs SET state='exited',lease_until=now(),updated_at=now()
-				WHERE broadcast_session_id=$1 AND run_id=$2 AND fencing_token=$3 AND state IN ('starting','running','stopping')`, s.id, run.runID, run.fence)
-			if err != nil {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("cannot record verified FFmpeg exit: %w", err))
-			} else if result.RowsAffected() != 1 {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("verified FFmpeg exit lost its fencing token"))
+			if err := w.recordVerifiedRunExit(ctx, s.id, run); err != nil {
+				cleanupErrors = append(cleanupErrors, err)
 			} else {
 				delete(w.runs, s.id)
 			}
@@ -535,42 +570,6 @@ func (w *Worker) cleanup(ctx context.Context, s sessionRow, snap MediaSnapshot) 
 	}
 	for _, conn := range sessionRTSP(snap, source, output) {
 		if err := w.MTX.Kick(ctx, "rtspsessions", conn.ID); err != nil {
-			cleanupErrors = append(cleanupErrors, err)
-		}
-	}
-	// Capture closure candidates before the final media snapshot. An Attach
-	// that arrives after this point cannot be closed using old absence evidence.
-	rows, err := w.DB.Query(ctx, `SELECT id::text,COALESCE(upstream_resource_path,''),request_started_at IS NULL
-		FROM media_create_operations WHERE broadcast_session_id=$1 AND state<>'closed'`, s.id)
-	if err != nil {
-		return errors.Join(append(cleanupErrors, err)...)
-	}
-	type candidate struct {
-		id, path  string
-		neverSent bool
-	}
-	var candidates []candidate
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.path, &c.neverSent); err != nil {
-			rows.Close()
-			return errors.Join(append(cleanupErrors, err)...)
-		}
-		if c.path != "" || c.neverSent {
-			candidates = append(candidates, c)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return errors.Join(append(cleanupErrors, err)...)
-	}
-	for _, c := range candidates {
-		if c.path == "" {
-			continue
-		}
-		user := "create." + c.id
-		if err := w.MTX.DeleteWHIP(ctx, c.path, source, user, credential(w.Secret, "create", c.id)); err != nil {
 			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
@@ -582,62 +581,22 @@ func (w *Worker) cleanup(ctx context.Context, s sessionRow, snap MediaSnapshot) 
 		return err
 	}
 	if check.Paths[source].Ready || check.Paths[output].Ready {
-		delete(w.absentSince, s.id)
 		return nil
 	}
 	for _, conn := range check.Ingress {
 		if conn.Path == source {
-			delete(w.absentSince, s.id)
 			return nil
 		}
 	}
 	if len(sessionRTSP(check, source, output)) != 0 {
-		delete(w.absentSince, s.id)
 		return nil
 	}
-	if first, ok := w.absentSince[s.id]; !ok {
-		w.absentSince[s.id] = time.Now()
-		return nil
-	} else if time.Since(first) < 5*time.Second {
-		return nil
-	}
-	// The same worker holds the exclusive cross-container lock. If an old run
-	// still has an unexpired lease, its absence is not yet established.
-	var lease time.Time
-	var runState string
-	var inherited bool
-	err = w.DB.QueryRow(ctx, `SELECT state,lease_until,lock_inherited FROM media_worker_runs WHERE broadcast_session_id=$1`, s.id).Scan(&runState, &lease, &inherited)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	// A replacement worker can confirm the prior run's exit only after the
+	// inherited process lock has become available, its lease has expired and
+	// this fresh snapshot contains no resource for the session. A previous run
+	// without the inherited lock remains unknown, even with an expired lease.
+	if err := w.confirmRecoveredRunExit(ctx, s); err != nil {
 		return err
-	}
-	if err == nil && runState != "exited" && (!inherited || time.Now().Before(lease)) {
-		return nil
-	}
-	_, err = w.DB.Exec(ctx, `UPDATE media_worker_runs SET state='exited',lease_until=now(),updated_at=now() WHERE broadcast_session_id=$1`, s.id)
-	if err != nil {
-		return err
-	}
-	// An unknown POST has no proven server-side lifetime bound. It remains
-	// unresolved and keeps the session STOPPING until a resource is recorded or
-	// an operator reconciles it with separate evidence.
-	for _, c := range candidates {
-		if c.path != "" {
-			_, err = w.DB.Exec(ctx, `UPDATE media_create_operations SET state='closed',resolved_at=now()
-				WHERE id=$1 AND broadcast_session_id=$2 AND upstream_resource_path=$3 AND state<>'closed'`, c.id, s.id, c.path)
-		} else if c.neverSent {
-			_, err = w.DB.Exec(ctx, `UPDATE media_create_operations SET state='closed',resolved_at=now()
-				WHERE id=$1 AND broadcast_session_id=$2 AND upstream_resource_path IS NULL AND request_started_at IS NULL AND state<>'closed'`, c.id, s.id)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	var unresolved bool
-	if err := w.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM media_create_operations WHERE broadcast_session_id=$1 AND state<>'closed')`, s.id).Scan(&unresolved); err != nil {
-		return err
-	}
-	if unresolved {
-		return nil
 	}
 	return w.transition(ctx, s, "ended", "", 0)
 }

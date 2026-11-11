@@ -1,0 +1,2706 @@
+diff --git a/cmd/wbb-bootstrap/main.go b/cmd/wbb-bootstrap/main.go
+new file mode 100644
+index 0000000..ada8563
+--- /dev/null
++++ b/cmd/wbb-bootstrap/main.go
+@@ -0,0 +1,15 @@
++package main
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
++)
++
++func main() {
++	if err := wbbcompletion.Bootstrap(os.Getenv("WBB_COMPLETION_ANCHOR"), os.Getenv("WBB_COMPLETION_DIR")); err != nil {
++		fmt.Fprintln(os.Stderr, "completion bootstrap failed:", err)
++		os.Exit(1)
++	}
++}
+diff --git a/internal/api/api.go b/internal/api/api.go
+index 75b948a..fc48f07 100644
+--- a/internal/api/api.go
++++ b/internal/api/api.go
+@@ -9,6 +9,7 @@ import (
+ 	"net/http"
+ 	"reflect"
+ 	"sort"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/gin-gonic/gin"
+@@ -74,28 +75,29 @@ type apiParent interface {
+ 
+ // API is an API server.
+ type API struct {
+-	Version        string
+-	Started        time.Time
+-	Address        string
+-	DumpPackets    bool
+-	Encryption     bool
+-	ServerKey      string
+-	ServerCert     string
+-	AllowOrigins   []string
+-	TrustedProxies conf.IPNetworks
+-	ReadTimeout    conf.Duration
+-	WriteTimeout   conf.Duration
+-	AuthManager    apiAuthManager
+-	PathManager    defs.APIPathManager
+-	RTSPServer     defs.APIRTSPServer
+-	RTSPSServer    defs.APIRTSPServer
+-	RTMPServer     defs.APIRTMPServer
+-	RTMPSServer    defs.APIRTMPServer
+-	HLSServer      defs.APIHLSServer
+-	WebRTCServer   defs.APIWebRTCServer
+-	SRTServer      defs.APISRTServer
+-	MoQServer      defs.APIMoQServer
+-	Parent         apiParent
++	Version            string
++	Started            time.Time
++	Address            string
++	DumpPackets        bool
++	Encryption         bool
++	ServerKey          string
++	ServerCert         string
++	AllowOrigins       []string
++	TrustedProxies     conf.IPNetworks
++	ReadTimeout        conf.Duration
++	WriteTimeout       conf.Duration
++	AuthManager        apiAuthManager
++	PathManager        defs.APIPathManager
++	RTSPServer         defs.APIRTSPServer
++	RTSPSServer        defs.APIRTSPServer
++	RTMPServer         defs.APIRTMPServer
++	RTMPSServer        defs.APIRTMPServer
++	HLSServer          defs.APIHLSServer
++	WebRTCServer       defs.APIWebRTCServer
++	SRTServer          defs.APISRTServer
++	MoQServer          defs.APIMoQServer
++	CompletionReadOnly bool
++	Parent             apiParent
+ 
+ 	httpServer *httpp.Server
+ 	ctx        context.Context
+@@ -110,6 +112,20 @@ func (a *API) Initialize() error {
+ 	router.SetTrustedProxies(a.TrustedProxies.ToTrustedProxies()) //nolint:errcheck
+ 	router.Use(a.middlewarePreflightRequests)
+ 	router.Use(a.middlewareAuth)
++	if a.CompletionReadOnly {
++		router.Use(func(ctx *gin.Context) {
++			if ctx.Request.Method != http.MethodGet &&
++				!(ctx.Request.Method == http.MethodPost &&
++					(strings.HasPrefix(ctx.Request.URL.Path, "/v3/rtsp/sessions/kick/") ||
++						strings.HasPrefix(ctx.Request.URL.Path, "/v3/rtspsessions/kick/") ||
++						strings.HasPrefix(ctx.Request.URL.Path, "/v3/webrtc/sessions/kick/") ||
++						strings.HasPrefix(ctx.Request.URL.Path, "/v3/webrtcsessions/kick/") ||
++						strings.HasPrefix(ctx.Request.URL.Path, "/v3/hls/sessions/kick/") ||
++						strings.HasPrefix(ctx.Request.URL.Path, "/v3/hlssessions/kick/"))) {
++				ctx.AbortWithStatus(http.StatusForbidden)
++			}
++		})
++	}
+ 
+ 	group := router.Group("/v3")
+ 
+diff --git a/internal/auth/manager.go b/internal/auth/manager.go
+index f692586..7175a41 100644
+--- a/internal/auth/manager.go
++++ b/internal/auth/manager.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/logger"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/httpp"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/tls"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
+ )
+ 
+ const (
+@@ -107,6 +108,7 @@ type Manager struct {
+ 	JWTAudience        string
+ 	ReadTimeout        time.Duration
+ 	Parent             logger.Writer
++	Completion         *wbbcompletion.Registry
+ 
+ 	wrapTransport   func(http.RoundTripper) http.RoundTripper
+ 	mutex           sync.RWMutex
+@@ -243,6 +245,15 @@ func (m *Manager) authenticateHTTP(req *Request, token string) (*Result, error)
+ 		return nil, fmt.Errorf("HTTP request failed: %w", err)
+ 	}
+ 	defer httpRes.Body.Close()
++	if m.Completion != nil && req.Protocol == ProtocolWebRTC && req.Action == conf.AuthActionPublish &&
++		req.Credentials != nil && strings.HasPrefix(req.Credentials.User, "create.") {
++		id := strings.TrimPrefix(req.Credentials.User, "create.")
++		if _, parseErr := uuid.Parse(id); parseErr == nil {
++			if err = m.Completion.WaitBarrier(wbbcompletion.DuringAuth, id); err != nil {
++				return nil, err
++			}
++		}
++	}
+ 
+ 	if httpRes.StatusCode < 200 || httpRes.StatusCode > 299 {
+ 		resBody, err2 := io.ReadAll(&customLimitReader{httpRes.Body, maxInboundBodySize})
+diff --git a/internal/core/completion_test.go b/internal/core/completion_test.go
+new file mode 100644
+index 0000000..8f29a6f
+--- /dev/null
++++ b/internal/core/completion_test.go
+@@ -0,0 +1,63 @@
++package core
++
++import (
++	"runtime"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++
++	"github.com/bluenviron/mediamtx/internal/conf"
++	"github.com/bluenviron/mediamtx/internal/logger"
++)
++
++func TestCompletionRejectsCredentialBearingDiagnostics(t *testing.T) {
++	if runtime.GOOS != "linux" {
++		t.Skip("completion experiment runs on Linux")
++	}
++	for _, ca := range []struct {
++		name string
++		conf conf.Conf
++	}{
++		{name: "debug", conf: conf.Conf{LogLevel: conf.LogLevel(logger.Debug)}},
++		{name: "packet_dump", conf: conf.Conf{DumpPackets: true}},
++	} {
++		t.Run(ca.name, func(t *testing.T) {
++			require.ErrorContains(t, validateCompletionConf(&ca.conf), "debug logging and packet dumps are unsupported")
++		})
++	}
++}
++
++func TestCompletionRejectsUntrackedPathMediaEffects(t *testing.T) {
++	if runtime.GOOS != "linux" {
++		t.Skip("completion experiment runs on Linux")
++	}
++	base := func() conf.Conf {
++		return conf.Conf{
++			WebRTC: true, HLS: true, API: true, RTSP: true,
++			AuthMethod: conf.AuthMethodHTTP, AuthHTTPAddress: "http://auth.invalid/callback",
++			PathDefaults: conf.Path{Source: "publisher"},
++			Paths:        map[string]*conf.Path{"example": {Source: "publisher"}},
++		}
++	}
++	control := base()
++	require.NoError(t, validateCompletionConf(&control))
++	for _, ca := range []struct {
++		name string
++		edit func(*conf.Path)
++	}{
++		{name: "always_available", edit: func(p *conf.Path) { p.AlwaysAvailable = true }},
++		{name: "forward", edit: func(p *conf.Path) { p.Forward = conf.Forward{{Dest: "rtsp://127.0.0.1:8554/other"}} }},
++	} {
++		for _, where := range []string{"defaults", "path"} {
++			t.Run(ca.name+"_"+where, func(t *testing.T) {
++				c := base()
++				if where == "defaults" {
++					ca.edit(&c.PathDefaults)
++				} else {
++					ca.edit(c.Paths["example"])
++				}
++				require.ErrorContains(t, validateCompletionConf(&c), "unsupported path")
++			})
++		}
++	}
++}
+diff --git a/internal/core/core.go b/internal/core/core.go
+index 755e907..2a38829 100644
+--- a/internal/core/core.go
++++ b/internal/core/core.go
+@@ -4,6 +4,7 @@ package core
+ import (
+ 	"context"
+ 	_ "embed"
++	"encoding/hex"
+ 	"fmt"
+ 	"net"
+ 	"os"
+@@ -13,6 +14,7 @@ import (
+ 	"runtime"
+ 	"runtime/debug"
+ 	"slices"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"syscall"
+@@ -40,6 +42,7 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/servers/srt"
+ 	"github.com/bluenviron/mediamtx/internal/servers/webrtc"
+ 	"github.com/bluenviron/mediamtx/internal/upgrade"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
+ )
+ 
+ //go:generate go run ./versiongetter
+@@ -60,6 +63,42 @@ var defaultConfPathsNotWin = []string{
+ 	"/etc/mediamtx/mediamtx.yml",
+ }
+ 
++// The completion experiment only supports WHIP publishing and HLS reading.
++// In particular, a second publishing protocol or dynamic configuration could
++// create untracked media effects outside the operation registry.
++func validateCompletionConf(c *conf.Conf) error {
++	if runtime.GOOS != "linux" {
++		return fmt.Errorf("Linux is required")
++	}
++	// The upstream HTTP debug logger records SDP/ICE credentials verbatim.
++	// Completion credentials and media offers must never enter those logs.
++	if c.LogLevel == conf.LogLevel(logger.Debug) || c.DumpPackets {
++		return fmt.Errorf("debug logging and packet dumps are unsupported in completion mode")
++	}
++	if !c.WebRTC || !c.HLS || !c.API || !c.RTSP || c.RTMP || c.SRT || c.MoQ || c.Playback ||
++		c.AuthMethod != conf.AuthMethodHTTP || c.AuthHTTPAddress == "" || len(c.AuthHTTPExclude) != 0 ||
++		c.RunOnConnect != "" || c.RunOnDisconnect != "" {
++		return fmt.Errorf("unsupported server or global hook")
++	}
++	checkPath := func(p *conf.Path) bool {
++		return p != nil && p.Source == "publisher" && !p.OverridePublisher && !p.Record &&
++			!p.AlwaysAvailable && len(p.Forward) == 0 &&
++			p.RunOnInit == "" && p.RunOnDemand == "" && p.RunOnUnDemand == "" &&
++			p.RunOnAvailable == "" && p.RunOnUnavailable == "" && p.RunOnOnline == "" &&
++			p.RunOnOffline == "" && p.RunOnRead == "" && p.RunOnUnread == "" &&
++			p.RunOnRecordSegmentCreate == "" && p.RunOnRecordSegmentComplete == ""
++	}
++	if !checkPath(&c.PathDefaults) {
++		return fmt.Errorf("unsupported path defaults")
++	}
++	for _, p := range c.Paths {
++		if !checkPath(p) {
++			return fmt.Errorf("unsupported path configuration")
++		}
++	}
++	return nil
++}
++
+ func currentDefaultConfPaths() []string {
+ 	paths := append([]string(nil), defaultConfPaths...)
+ 	if runtime.GOOS != "windows" {
+@@ -198,28 +237,32 @@ var cli struct {
+ 
+ // Core is an instance of MediaMTX.
+ type Core struct {
+-	ctx             context.Context
+-	ctxCancel       func()
+-	confPath        string
+-	supportsIPv6    bool
+-	logger          *logger.Logger
+-	externalCmdPool *externalcmd.Pool
+-	authManager     *auth.Manager
+-	metrics         *metrics.Metrics
+-	pprof           *pprof.PPROF
+-	recordCleaner   *recordcleaner.Cleaner
+-	playbackServer  *playback.Server
+-	pathManager     *pathManager
+-	rtspServer      *rtsp.Server
+-	rtspsServer     *rtsp.Server
+-	rtmpServer      *rtmp.Server
+-	rtmpsServer     *rtmp.Server
+-	hlsServer       *hls.Server
+-	webRTCServer    *webrtc.Server
+-	srtServer       *srt.Server
+-	moqServer       *moq.Server
+-	api             *api.API
+-	confWatcher     *confwatcher.ConfWatcher
++	ctx                context.Context
++	ctxCancel          func()
++	confPath           string
++	supportsIPv6       bool
++	logger             *logger.Logger
++	externalCmdPool    *externalcmd.Pool
++	authManager        *auth.Manager
++	metrics            *metrics.Metrics
++	pprof              *pprof.PPROF
++	recordCleaner      *recordcleaner.Cleaner
++	playbackServer     *playback.Server
++	pathManager        *pathManager
++	rtspServer         *rtsp.Server
++	rtspsServer        *rtsp.Server
++	rtmpServer         *rtmp.Server
++	rtmpsServer        *rtmp.Server
++	hlsServer          *hls.Server
++	webRTCServer       *webrtc.Server
++	srtServer          *srt.Server
++	moqServer          *moq.Server
++	api                *api.API
++	confWatcher        *confwatcher.ConfWatcher
++	completion         *wbbcompletion.Registry
++	completionHTTP     *wbbcompletion.HTTP
++	completionKey      []byte
++	disableConfWatcher bool
+ 
+ 	confMutex       sync.RWMutex
+ 	conf            *conf.Conf
+@@ -353,6 +396,48 @@ func New(args []string) (*Core, bool) {
+ 	p.confPath = confPath
+ 	p.conf = loadedConf
+ 	p.internalUserIDs = newInternalUserIDs(len(loadedConf.AuthInternalUsers))
++	if anchorPath := os.Getenv("WBB_COMPLETION_ANCHOR"); anchorPath != "" {
++		if err = validateCompletionConf(loadedConf); err != nil {
++			fmt.Printf("ERR: completion configuration: %s\n", err)
++			return nil, false
++		}
++		key, keyErr := hex.DecodeString(os.Getenv("WBB_COMPLETION_KEY_HEX"))
++		if keyErr != nil || len(key) < 32 {
++			fmt.Printf("ERR: invalid completion key\n")
++			return nil, false
++		}
++		capacity := 64
++		if raw := os.Getenv("WBB_COMPLETION_TEST_CAPACITY"); raw != "" {
++			var n int
++			n, err = strconv.Atoi(raw)
++			if os.Getenv("WBB_COMPLETION_BARRIERS") != "1" || err != nil || n < 1 || n > 64 {
++				fmt.Printf("ERR: invalid experiment registry capacity\n")
++				return nil, false
++			}
++			capacity = n
++		}
++		p.completion, err = wbbcompletion.Open(anchorPath, os.Getenv("WBB_COMPLETION_DIR"), capacity)
++		if err != nil {
++			fmt.Printf("ERR: completion history unavailable: %s\n", err)
++			return nil, false
++		}
++		p.completionKey = key
++		if os.Getenv("WBB_COMPLETION_BARRIERS") == "1" {
++			p.completion.EnableBarriers()
++		}
++		p.completionHTTP, err = wbbcompletion.NewHTTP(p.completion, key)
++		if err != nil {
++			fmt.Printf("ERR: completion management setup failed\n")
++			return nil, false
++		}
++		if err = p.completionHTTP.Start(os.Getenv("WBB_COMPLETION_ADDRESS")); err != nil {
++			fmt.Printf("ERR: completion management listener failed\n")
++			return nil, false
++		}
++		// This experiment has no dynamic reload. Keep the original path for
++		// accurate startup diagnostics, but never create its watcher.
++		p.disableConfWatcher = true
++	}
+ 
+ 	err = p.createResources(true)
+ 	if err != nil {
+@@ -361,7 +446,13 @@ func New(args []string) (*Core, bool) {
+ 		} else {
+ 			fmt.Printf("ERR: %s\n", err)
+ 		}
++		if p.completion != nil {
++			p.completion.AbortBarriers()
++		}
+ 		p.closeResources(nil) //nolint:errcheck
++		if p.completionHTTP != nil {
++			p.completionHTTP.Stop()
++		}
+ 		return nil, false
+ 	}
+ 
+@@ -563,8 +654,14 @@ outer:
+ 	}
+ 
+ 	p.ctxCancel()
++	if p.completion != nil {
++		p.completion.AbortBarriers()
++	}
+ 
+ 	p.closeResources(nil) //nolint:errcheck
++	if p.completionHTTP != nil {
++		p.completionHTTP.Stop()
++	}
+ }
+ 
+ // OnFatalError is called by servers.
+@@ -633,6 +730,7 @@ func (p *Core) createResources(initial bool) error {
+ 			JWTIssuer:          p.conf.AuthJWTIssuer,
+ 			JWTAudience:        p.conf.AuthJWTAudience,
+ 			ReadTimeout:        time.Duration(p.conf.ReadTimeout),
++			Completion:         p.completion,
+ 			Parent:             p,
+ 		}
+ 		p.authManager.Initialize()
+@@ -944,6 +1042,8 @@ func (p *Core) createResources(initial bool) error {
+ 			Metrics:                      p.metrics,
+ 			PathManager:                  p.pathManager,
+ 			Parent:                       p,
++			Completion:                   p.completion,
++			CompletionKey:                p.completionKey,
+ 		}
+ 		err = i.Initialize()
+ 		if err != nil {
+@@ -1003,28 +1103,29 @@ func (p *Core) createResources(initial bool) error {
+ 	if p.conf.API &&
+ 		p.api == nil {
+ 		i := &api.API{
+-			Version:        string(version),
+-			Started:        started,
+-			Address:        p.conf.APIAddress,
+-			DumpPackets:    p.conf.DumpPackets,
+-			Encryption:     p.conf.APIEncryption,
+-			ServerKey:      p.conf.APIServerKey,
+-			ServerCert:     p.conf.APIServerCert,
+-			AllowOrigins:   p.conf.APIAllowOrigins,
+-			TrustedProxies: p.conf.APITrustedProxies,
+-			ReadTimeout:    p.conf.ReadTimeout,
+-			WriteTimeout:   p.conf.WriteTimeout,
+-			AuthManager:    p.authManager,
+-			PathManager:    p.pathManager,
+-			RTSPServer:     p.rtspServer,
+-			RTSPSServer:    p.rtspsServer,
+-			RTMPServer:     p.rtmpServer,
+-			RTMPSServer:    p.rtmpsServer,
+-			HLSServer:      p.hlsServer,
+-			WebRTCServer:   p.webRTCServer,
+-			SRTServer:      p.srtServer,
+-			MoQServer:      p.moqServer,
+-			Parent:         p,
++			Version:            string(version),
++			Started:            started,
++			Address:            p.conf.APIAddress,
++			DumpPackets:        p.conf.DumpPackets,
++			Encryption:         p.conf.APIEncryption,
++			ServerKey:          p.conf.APIServerKey,
++			ServerCert:         p.conf.APIServerCert,
++			AllowOrigins:       p.conf.APIAllowOrigins,
++			TrustedProxies:     p.conf.APITrustedProxies,
++			ReadTimeout:        p.conf.ReadTimeout,
++			WriteTimeout:       p.conf.WriteTimeout,
++			AuthManager:        p.authManager,
++			PathManager:        p.pathManager,
++			RTSPServer:         p.rtspServer,
++			RTSPSServer:        p.rtspsServer,
++			RTMPServer:         p.rtmpServer,
++			RTMPSServer:        p.rtmpsServer,
++			HLSServer:          p.hlsServer,
++			WebRTCServer:       p.webRTCServer,
++			SRTServer:          p.srtServer,
++			MoQServer:          p.moqServer,
++			CompletionReadOnly: p.completion != nil,
++			Parent:             p,
+ 		}
+ 		err = i.Initialize()
+ 		if err != nil {
+@@ -1033,7 +1134,7 @@ func (p *Core) createResources(initial bool) error {
+ 		p.api = i
+ 	}
+ 
+-	if initial && p.confPath != "" {
++	if initial && p.confPath != "" && !p.disableConfWatcher {
+ 		cf := &confwatcher.ConfWatcher{FilePath: p.confPath}
+ 		err = cf.Initialize()
+ 		if err != nil {
+diff --git a/internal/core/path.go b/internal/core/path.go
+index 83e4e6d..5d1cbe8 100644
+--- a/internal/core/path.go
++++ b/internal/core/path.go
+@@ -1194,6 +1194,10 @@ func (pa *path) RemovePublisher(req defs.PathRemovePublisherReq) {
+ 	case pa.chRemovePublisher <- req:
+ 		<-req.Res
+ 	case <-pa.ctx.Done():
++		// The path can have cancelled its context before its run() defer
++		// removes the stream. Completion requires that cleanup, not just
++		// cancellation. This wait is outside the path event loop.
++		<-pa.done
+ 	}
+ }
+ 
+diff --git a/internal/protocols/httpp/request_for_log.go b/internal/protocols/httpp/request_for_log.go
+index 76f11e2..b237441 100644
+--- a/internal/protocols/httpp/request_for_log.go
++++ b/internal/protocols/httpp/request_for_log.go
+@@ -21,6 +21,7 @@ var headersToRedact = map[string]struct{}{
+ 	"Set-Cookie":          {},
+ 	"X-Api-Key":           {},
+ 	"X-Auth-Token":        {},
++	"X-Wbb-Signature":     {},
+ }
+ 
+ type replayBody struct {
+@@ -47,7 +48,7 @@ func headerForLog(h http.Header) string {
+ 
+ 	for _, k := range keys {
+ 		for _, v := range h[k] {
+-			if _, ok := headersToRedact[k]; ok {
++			if _, ok := headersToRedact[http.CanonicalHeaderKey(k)]; ok {
+ 				v = redactedCredential
+ 			}
+ 			fmt.Fprintf(&b, "%s: %s\r\n", k, v)
+diff --git a/internal/protocols/httpp/request_for_log_test.go b/internal/protocols/httpp/request_for_log_test.go
+index 78f2880..e0ef0c8 100644
+--- a/internal/protocols/httpp/request_for_log_test.go
++++ b/internal/protocols/httpp/request_for_log_test.go
+@@ -77,6 +77,19 @@ func TestRequestForLog(t *testing.T) {
+ 	}
+ }
+ 
++func TestRequestForLogRedactsCompletionSignatureWithHeaderCaseVariants(t *testing.T) {
++	for _, headerName := range []string{"X-WBB-Signature", "x-wbb-signature", "X-wBb-SiGnAtUrE"} {
++		t.Run(headerName, func(t *testing.T) {
++			req, err := http.NewRequest(http.MethodPost, "http://localhost/test", strings.NewReader("body"))
++			require.NoError(t, err)
++			req.Header[headerName] = []string{"secret-completion-signature"}
++			logged := httpp.RequestForLog(req)
++			require.Contains(t, logged, "<redacted>")
++			require.NotContains(t, logged, "secret-completion-signature")
++		})
++	}
++}
++
+ func BenchmarkRequestForLog(b *testing.B) {
+ 	for _, ca := range casesRequestForLog {
+ 		b.Run(ca.name, func(b *testing.B) {
+diff --git a/internal/protocols/webrtc/inbound_track.go b/internal/protocols/webrtc/inbound_track.go
+index 2c7592f..6b10a22 100644
+--- a/internal/protocols/webrtc/inbound_track.go
++++ b/internal/protocols/webrtc/inbound_track.go
+@@ -2,6 +2,7 @@ package webrtc
+ 
+ import (
+ 	"crypto/rand"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/bluenviron/gortsplib/v5/pkg/rtpreceiver"
+@@ -275,6 +276,8 @@ func randUint16() (uint16, error) {
+ // InboundTrack is an incoming track.
+ type InboundTrack struct {
+ 	OnPacketRTP func(*rtp.Packet)
++	BeforeRTP   func() bool // isolated completion experiment callback barrier
++	BeforePLI   func() bool // isolated completion experiment PLI barrier
+ 
+ 	track     *webrtc.TrackRemote
+ 	receiver  *webrtc.RTPReceiver
+@@ -287,6 +290,8 @@ type InboundTrack struct {
+ 	twccExtID             uint8
+ 	inboundRTPPacketsLost *counterdumper.Dumper
+ 	rtpReceiver           *rtpreceiver.Receiver
++	stopCh                chan struct{}
++	readers               sync.WaitGroup
+ }
+ 
+ func (t *InboundTrack) initialize() {
+@@ -326,6 +331,7 @@ func (*InboundTrack) PTSEqualsDTS(*rtp.Packet) bool {
+ }
+ 
+ func (t *InboundTrack) start() {
++	t.stopCh = make(chan struct{})
+ 	t.inboundRTPPacketsLost = &counterdumper.Dumper{
+ 		OnReport: func(val uint64) {
+ 			t.log.Log(logger.Warn, "%d RTP %s lost",
+@@ -355,7 +361,9 @@ func (t *InboundTrack) start() {
+ 
+ 	// read incoming RTCP packets.
+ 	// incoming RTCP packets must always be read to make interceptors work.
++	t.readers.Add(1)
+ 	go func() {
++		defer t.readers.Done()
+ 		buf := make([]byte, 1500)
+ 		for {
+ 			n, _, err2 := t.receiver.ReadSimulcast(buf, t.rid)
+@@ -381,11 +389,21 @@ func (t *InboundTrack) start() {
+ 
+ 	// send period key frame requests
+ 	if t.track.Kind() == webrtc.RTPCodecTypeVideo {
++		t.readers.Add(1)
+ 		go func() {
++			defer t.readers.Done()
+ 			keyframeTicker := time.NewTicker(keyFrameInterval)
+ 			defer keyframeTicker.Stop()
+ 
+-			for range keyframeTicker.C {
++			for {
++				select {
++				case <-t.stopCh:
++					return
++				case <-keyframeTicker.C:
++				}
++				if t.BeforePLI != nil && !t.BeforePLI() {
++					return
++				}
+ 				err2 := t.writeRTCP([]rtcp.Packet{
+ 					&rtcp.PictureLossIndication{
+ 						MediaSSRC: uint32(t.track.SSRC()),
+@@ -406,7 +424,9 @@ func (t *InboundTrack) start() {
+ 	}
+ 	seqNumberOffsetInitialized := false
+ 
++	t.readers.Add(1)
+ 	go func() {
++		defer t.readers.Done()
+ 		for {
+ 			pkt, _, err2 := t.track.ReadRTP()
+ 			if err2 != nil {
+@@ -449,6 +469,9 @@ func (t *InboundTrack) PacketNTP(pkt *rtp.Packet) (time.Time, bool) {
+ }
+ 
+ func (t *InboundTrack) close() {
++	if t.stopCh != nil {
++		close(t.stopCh)
++	}
+ 	if t.inboundRTPPacketsLost != nil {
+ 		t.inboundRTPPacketsLost.Stop()
+ 	}
+@@ -456,3 +479,9 @@ func (t *InboundTrack) close() {
+ 		t.rtpReceiver.Close()
+ 	}
+ }
++
++// waitReaders must run after PeerConnection.GracefulClose, which unblocks
++// ReadRTP and ReadSimulcast. Waiting in close() would deadlock.
++func (t *InboundTrack) waitReaders() {
++	t.readers.Wait()
++}
+diff --git a/internal/protocols/webrtc/peer_connection.go b/internal/protocols/webrtc/peer_connection.go
+index bc90b62..56dfa1a 100644
+--- a/internal/protocols/webrtc/peer_connection.go
++++ b/internal/protocols/webrtc/peer_connection.go
+@@ -462,6 +462,9 @@ func (co *PeerConnection) run() {
+ 		}
+ 
+ 		co.wr.GracefulClose() //nolint:errcheck
++		for _, track := range co.inboundTracks {
++			track.waitReaders()
++		}
+ 
+ 		// even if GracefulClose() should wait for any goroutine to return,
+ 		// we have to wait for OnConnectionStateChange to return anyway,
+diff --git a/internal/protocols/webrtc/to_stream.go b/internal/protocols/webrtc/to_stream.go
+index a03ed20..510bc72 100644
+--- a/internal/protocols/webrtc/to_stream.go
++++ b/internal/protocols/webrtc/to_stream.go
+@@ -188,6 +188,9 @@ func ToStream(
+ 		}
+ 
+ 		track.OnPacketRTP = func(pkt *rtp.Packet) {
++			if track.BeforeRTP != nil && !track.BeforeRTP() {
++				return
++			}
+ 			pkt.PayloadType = forma.PayloadType()
+ 
+ 			pts, ok := timeDecoder.Decode(track, pkt)
+diff --git a/internal/servers/webrtc/http_server.go b/internal/servers/webrtc/http_server.go
+index 941424e..fee2999 100644
+--- a/internal/servers/webrtc/http_server.go
++++ b/internal/servers/webrtc/http_server.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/logger"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/httpp"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/whip"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
+ )
+ 
+ //go:embed publish_index.html
+@@ -206,17 +207,49 @@ func (s *httpServer) onWHIPPost(ctx *gin.Context, pathName string, publish bool)
+ 	if err != nil {
+ 		return
+ 	}
+-
+ 	creds := &auth.Credentials{}
+ 	creds.FromHTTP(ctx.Request)
++	var completion *wbbcompletion.Operation
++	if publish && s.parent.Completion != nil {
++		id, authErr := s.parent.Completion.VerifyPublish(ctx.Request, s.parent.CompletionKey, pathName, offer)
++		if authErr != nil {
++			s.writeErrorNoLog(ctx, http.StatusUnauthorized, fmt.Errorf("invalid internal publish authorization"))
++			return
++		}
++		if creds.User != "create."+id {
++			s.writeErrorNoLog(ctx, http.StatusUnauthorized, fmt.Errorf("operation credential mismatch"))
++			return
++		}
++		if err = s.parent.Completion.WaitBarrier(wbbcompletion.BeforeRegister, id); err != nil {
++			s.writeErrorNoLog(ctx, http.StatusConflict, fmt.Errorf("operation interrupted"))
++			return
++		}
++		completion, err = s.parent.Completion.Begin(id, pathName, wbbcompletion.OfferDigest(offer))
++		if err != nil {
++			status := http.StatusConflict
++			if errors.Is(err, wbbcompletion.ErrCapacity) {
++				status = http.StatusServiceUnavailable
++			}
++			s.writeErrorNoLog(ctx, status, fmt.Errorf("operation unavailable"))
++			return
++		}
++		defer completion.DoneCreation()
++		defer func() {
++			if ctx.Request.Context().Err() != nil {
++				s.parent.Completion.CloseOperation(id)
++			}
++		}()
++	}
+ 
+ 	res := s.parent.newSession(newSessionReq{
++		ctx:         ctx.Request.Context(),
+ 		remoteAddr:  httpp.RemoteAddr(ctx),
+ 		pathName:    pathName,
+ 		query:       ctx.Request.URL.RawQuery,
+ 		userAgent:   ctx.Request.UserAgent(),
+ 		credentials: creds,
+ 		publish:     publish,
++		completion:  completion,
+ 		offer:       offer,
+ 	})
+ 	if res.err != nil {
+@@ -224,8 +257,12 @@ func (s *httpServer) onWHIPPost(ctx *gin.Context, pathName string, publish bool)
+ 		return
+ 	}
+ 
+-	res2 := res.sx.initialRequest(initialRequestReq{})
++	res2 := res.sx.initialRequest(initialRequestReq{ctx: ctx.Request.Context()})
+ 	if res2.err != nil {
++		if completion != nil && completion.IsClosing() {
++			s.writeErrorNoLog(ctx, http.StatusConflict, fmt.Errorf("operation closing"))
++			return
++		}
+ 		if terr, ok := errors.AsType[*auth.Error](res2.err); ok {
+ 			if terr.AskCredentials {
+ 				ctx.Header("WWW-Authenticate", `Basic realm="mediamtx"`)
+@@ -247,6 +284,13 @@ func (s *httpServer) onWHIPPost(ctx *gin.Context, pathName string, publish bool)
+ 		return
+ 	}
+ 
++	if completion != nil {
++		if err = s.parent.Completion.WaitBarrier(wbbcompletion.BeforeCompletionResponse, completion.ID()); err != nil || completion.IsClosing() {
++			s.writeErrorNoLog(ctx, http.StatusConflict, fmt.Errorf("operation closed before response"))
++			return
++		}
++	}
++
+ 	ctx.Header("Content-Type", "application/sdp")
+ 	ctx.Header("Access-Control-Expose-Headers", "ETag, ID, Accept-Patch, Link, Location")
+ 	ctx.Header("ETag", "*")
+diff --git a/internal/servers/webrtc/server.go b/internal/servers/webrtc/server.go
+index 4547016..1b574ca 100644
+--- a/internal/servers/webrtc/server.go
++++ b/internal/servers/webrtc/server.go
+@@ -31,6 +31,7 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/protocols/webrtc"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/whip"
+ 	"github.com/bluenviron/mediamtx/internal/restrictnetwork"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
+ )
+ 
+ const (
+@@ -141,6 +142,7 @@ type newSessionRes struct {
+ }
+ 
+ type newSessionReq struct {
++	ctx         context.Context
+ 	remoteAddr  string
+ 	pathName    string
+ 	query       string
+@@ -148,6 +150,7 @@ type newSessionReq struct {
+ 	credentials *auth.Credentials
+ 	offer       []byte
+ 	publish     bool
++	completion  *wbbcompletion.Operation
+ 	res         chan newSessionRes
+ }
+ 
+@@ -214,6 +217,8 @@ type Server struct {
+ 	Metrics                      serverMetrics
+ 	PathManager                  serverPathManager
+ 	Parent                       serverParent
++	Completion                   *wbbcompletion.Registry
++	CompletionKey                []byte
+ 
+ 	ctx              context.Context
+ 	ctxCancel        func()
+@@ -271,18 +276,12 @@ func (s *Server) Initialize() error {
+ 		pathManager:    s.PathManager,
+ 		parent:         s,
+ 	}
+-	err := s.httpServer.initialize()
+-	if err != nil {
+-		ctxCancel()
+-		return err
+-	}
+-
+ 	s.net = &webrtc.Net{UDPReadBufferSize: int(s.UDPReadBufferSize)}
+ 
+ 	if s.LocalUDPAddress != "" {
++		var err error
+ 		s.udpMuxLn, err = net.ListenPacket(restrictnetwork.Restrict("udp", s.LocalUDPAddress))
+ 		if err != nil {
+-			s.httpServer.close()
+ 			ctxCancel()
+ 			return err
+ 		}
+@@ -291,7 +290,6 @@ func (s *Server) Initialize() error {
+ 			err = readbuffer.SetReadBuffer(s.udpMuxLn.(*net.UDPConn), int(s.UDPReadBufferSize))
+ 			if err != nil {
+ 				s.udpMuxLn.Close()
+-				s.httpServer.close()
+ 				ctxCancel()
+ 				return err
+ 			}
+@@ -305,12 +303,12 @@ func (s *Server) Initialize() error {
+ 	}
+ 
+ 	if s.LocalTCPAddress != "" {
++		var err error
+ 		s.tcpMuxLn, err = net.Listen(restrictnetwork.Restrict("tcp", s.LocalTCPAddress))
+ 		if err != nil {
+ 			if s.udpMuxLn != nil {
+ 				s.udpMuxLn.Close()
+ 			}
+-			s.httpServer.close()
+ 			ctxCancel()
+ 			return err
+ 		}
+@@ -321,6 +319,19 @@ func (s *Server) Initialize() error {
+ 		}
+ 	}
+ 
++	// Open HTTP only after every ICE listener is ready. A failing listener
++	// must not leave accepted WHIP handlers waiting at an experiment barrier.
++	if err := s.httpServer.initialize(); err != nil {
++		if s.tcpMuxLn != nil {
++			s.tcpMuxLn.Close()
++		}
++		if s.udpMuxLn != nil {
++			s.udpMuxLn.Close()
++		}
++		ctxCancel()
++		return err
++	}
++
+ 	str := "started with listeners on " + s.Address
+ 	if !s.Encryption {
+ 		str += " (TCP/HTTP)"
+@@ -377,6 +388,16 @@ outer:
+ 			break outer
+ 
+ 		case req := <-s.chNewSession:
++			if req.completion != nil && req.completion.IsClosing() {
++				req.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("operation closing")}
++				continue
++			}
++			if req.completion != nil {
++				if err := req.completion.WaitBarrier(wbbcompletion.BeforeSessionInitialize); err != nil || req.completion.IsClosing() {
++					req.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("operation interrupted before initialization")}
++					continue
++				}
++			}
+ 			sx := &session{
+ 				net:                          s.net,
+ 				parentCtx:                    s.ctx,
+@@ -401,6 +422,7 @@ outer:
+ 				externalCmdPool:              s.ExternalCmdPool,
+ 				pathManager:                  s.PathManager,
+ 				parent:                       s,
++				completion:                   req.completion,
+ 			}
+ 			sx.initialize()
+ 			s.sessions[sx] = struct{}{}
+@@ -541,12 +563,16 @@ func (s *Server) generateICEServers(clientConfig bool) ([]pwebrtc.ICEServer, err
+ 
+ // newSession is called by webRTCHTTPServer.
+ func (s *Server) newSession(req newSessionReq) newSessionRes {
+-	req.res = make(chan newSessionRes)
++	req.res = make(chan newSessionRes, 1)
+ 
+ 	select {
+ 	case s.chNewSession <- req:
++		// Once accepted by the event loop, the creation handler retains its
++		// ref until the loop declines or attaches the session ref.
+ 		return <-req.res
+ 
++	case <-req.ctx.Done():
++		return newSessionRes{errStatusCode: http.StatusRequestTimeout, err: fmt.Errorf("request cancelled")}
+ 	case <-s.ctx.Done():
+ 		return newSessionRes{
+ 			errStatusCode: http.StatusInternalServerError,
+@@ -567,7 +593,7 @@ func (s *Server) closeSession(sx *session) {
+ func (s *Server) addSessionCandidates(
+ 	req addSessionCandidatesReq,
+ ) addSessionCandidatesRes {
+-	req.res = make(chan addSessionCandidatesRes)
++	req.res = make(chan addSessionCandidatesRes, 1)
+ 	select {
+ 	case s.chAddSessionCandidates <- req:
+ 		res1 := <-req.res
+diff --git a/internal/servers/webrtc/server_test.go b/internal/servers/webrtc/server_test.go
+index f37c42f..b2811bc 100644
+--- a/internal/servers/webrtc/server_test.go
++++ b/internal/servers/webrtc/server_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
++	"net"
+ 	"net/http"
+ 	"net/url"
+ 	"reflect"
+@@ -29,8 +30,141 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/stream"
+ 	"github.com/bluenviron/mediamtx/internal/test"
+ 	"github.com/bluenviron/mediamtx/internal/unit"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
++	"os"
++	"path/filepath"
++	"sync"
+ )
+ 
++func TestCompletionICEBindFailureNeverAcceptsWHIP(t *testing.T) {
++	udp, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer udp.Close()
++	httpReservation, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	httpAddress := httpReservation.Addr().String()
++	require.NoError(t, httpReservation.Close())
++
++	s := &Server{
++		Address:         httpAddress,
++		LocalUDPAddress: udp.LocalAddr().String(),
++		Parent:          test.NilLogger,
++	}
++	require.Error(t, s.Initialize())
++	conn, err := net.DialTimeout("tcp", httpAddress, 100*time.Millisecond)
++	if err == nil {
++		conn.Close()
++	}
++	require.Error(t, err, "WHIP accepted requests despite failed ICE initialization")
++}
++
++func TestCompletionTCPBindFailureReleasesUDPWithoutAcceptingWHIP(t *testing.T) {
++	tcp, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer tcp.Close()
++	udpReservation, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	require.NoError(t, err)
++	udpAddress := udpReservation.LocalAddr().String()
++	require.NoError(t, udpReservation.Close())
++	httpReservation, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	httpAddress := httpReservation.Addr().String()
++	require.NoError(t, httpReservation.Close())
++
++	s := &Server{
++		Address:         httpAddress,
++		LocalUDPAddress: udpAddress,
++		LocalTCPAddress: tcp.Addr().String(),
++		Parent:          test.NilLogger,
++	}
++	require.Error(t, s.Initialize())
++	conn, err := net.DialTimeout("tcp", httpAddress, 100*time.Millisecond)
++	if err == nil {
++		conn.Close()
++	}
++	require.Error(t, err, "WHIP accepted requests despite failed ICE TCP initialization")
++
++	udp, err := net.ListenPacket("udp4", udpAddress)
++	require.NoError(t, err, "failed ICE initialization retained its UDP listener")
++	require.NoError(t, udp.Close())
++}
++
++func TestCancelledParentBeforeSessionRunKeepsOperationRef(t *testing.T) {
++	dir := t.TempDir()
++	anchor := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := wbbcompletion.Bootstrap(anchor, dir); err != nil {
++		t.Fatal(err)
++	}
++	r, err := wbbcompletion.Open(anchor, dir, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	op, err := r.Begin("op", "path", "digest")
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.CloseOperation("op")
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	parent := &Server{ctx: ctx, Parent: test.NilLogger, chCloseSession: make(chan *session)}
++	var wg sync.WaitGroup
++	sx := &session{parentCtx: ctx, parent: parent, wg: &wg, completion: op}
++	sx.initialize()
++	op.DoneCreation()
++	done := make(chan struct{})
++	go func() { wg.Wait(); close(done) }()
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("cancelled session did not finish")
++	}
++	if got := r.Query("op"); got.State != wbbcompletion.Completed {
++		t.Fatalf("completion state %s", got.State)
++	}
++}
++
++func TestAcceptedNewSessionKeepsCreationOwnerAfterHTTPCancel(t *testing.T) {
++	dir := t.TempDir()
++	anchor := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := wbbcompletion.Bootstrap(anchor, dir); err != nil {
++		t.Fatal(err)
++	}
++	r, err := wbbcompletion.Open(anchor, dir, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	op, err := r.Begin("op", "path", "digest")
++	if err != nil {
++		t.Fatal(err)
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	s := &Server{ctx: context.Background(), chNewSession: make(chan newSessionReq)}
++	returned := make(chan newSessionRes, 1)
++	go func() { returned <- s.newSession(newSessionReq{ctx: ctx, completion: op}) }()
++	accepted := <-s.chNewSession
++	cancel()
++	if got := r.CloseOperation("op"); got.State != wbbcompletion.Closing {
++		t.Fatalf("owner lost after accept: %s", got.State)
++	}
++	select {
++	case <-returned:
++		t.Fatal("accepted request returned before ownership transfer")
++	default:
++	}
++	accepted.res <- newSessionRes{errStatusCode: http.StatusConflict, err: fmt.Errorf("closed")}
++	<-returned
++	op.DoneCreation()
++	if got := r.Query("op"); got.State != wbbcompletion.Completed {
++		t.Fatalf("completion %s", got.State)
++	}
++}
++
+ func whipAnswer(body []byte) *pwebrtc.SessionDescription {
+ 	return &pwebrtc.SessionDescription{
+ 		Type: pwebrtc.SDPTypeAnswer,
+diff --git a/internal/servers/webrtc/session.go b/internal/servers/webrtc/session.go
+index 3a41395..d6ff220 100644
+--- a/internal/servers/webrtc/session.go
++++ b/internal/servers/webrtc/session.go
+@@ -29,6 +29,7 @@ import (
+ 	"github.com/bluenviron/mediamtx/internal/protocols/webrtc"
+ 	"github.com/bluenviron/mediamtx/internal/protocols/whip"
+ 	"github.com/bluenviron/mediamtx/internal/stream"
++	"github.com/bluenviron/mediamtx/internal/wbbcompletion"
+ )
+ 
+ func whipOffer(body []byte) *pwebrtc.SessionDescription {
+@@ -226,6 +227,7 @@ type initialRequestRes struct {
+ }
+ 
+ type initialRequestReq struct {
++	ctx context.Context
+ 	res chan initialRequestRes
+ }
+ 
+@@ -259,6 +261,7 @@ type session struct {
+ 	externalCmdPool              *externalcmd.Pool
+ 	pathManager                  serverPathManager
+ 	parent                       sessionParent
++	completion                   *wbbcompletion.Operation
+ 
+ 	ctx       context.Context
+ 	ctxCancel func()
+@@ -273,6 +276,7 @@ type session struct {
+ 
+ 	chInitialRequest chan initialRequestReq
+ 	chAddCandidates  chan addSessionCandidatesReq
++	remoteCandidates sync.WaitGroup
+ }
+ 
+ func (s *session) initialize() {
+@@ -286,6 +290,11 @@ func (s *session) initialize() {
+ 	s.Log(logger.Info, "created by %s", s.remoteAddr)
+ 
+ 	s.wg.Add(1)
++	if s.completion != nil {
++		// The session ref must exist before run can observe an already
++		// cancelled parent context and report completion.
++		s.completion.AttachSession(s.Close)
++	}
+ 
+ 	go s.run()
+ }
+@@ -306,8 +315,15 @@ func (s *session) run() {
+ 	err := s.runInner()
+ 
+ 	s.ctxCancel()
++	// readRemoteCandidates is intentionally outside runInner's errgroup: it
++	// exits on s.ctx cancellation, which only happens after runInner returns.
++	// Join it before publishing operation completion, including ICE restarts.
++	s.remoteCandidates.Wait()
+ 
+ 	s.parent.closeSession(s)
++	if s.completion != nil {
++		s.completion.DoneSession()
++	}
+ 
+ 	s.Log(logger.Info, "closed: %v", err)
+ }
+@@ -458,7 +474,11 @@ func (s *session) runPublish(
+ 		answer: []byte(answer.SDP),
+ 	}
+ 
+-	go s.readRemoteCandidates(s.offer, pc)
++	s.remoteCandidates.Add(1)
++	go func() {
++		defer s.remoteCandidates.Done()
++		s.readRemoteCandidates(s.offer, pc)
++	}()
+ 
+ 	err = pc.WaitUntilConnected(time.Duration(s.handshakeTimeout))
+ 	if err != nil {
+@@ -499,6 +519,22 @@ func (s *session) runPublish(
+ 	if err != nil {
+ 		return 0, err
+ 	}
++	if s.completion != nil {
++		for _, track := range pc.InboundTracks() {
++			track.BeforeRTP = func() bool {
++				return s.completion.WaitBarrier(wbbcompletion.DuringRTPCallback) == nil && !s.completion.IsClosing()
++			}
++			track.BeforePLI = func() bool {
++				return s.completion.WaitBarrier(wbbcompletion.DuringPLI) == nil && !s.completion.IsClosing()
++			}
++		}
++		if err = s.completion.WaitBarrier(wbbcompletion.BeforeAddPublisher); err != nil {
++			return 0, err
++		}
++		if s.completion.IsClosing() {
++			return 0, fmt.Errorf("operation closing")
++		}
++	}
+ 
+ 	res2, err := s.pathManager.AddPublisher(defs.PathAddPublisherReq{
+ 		Author:        s,
+@@ -621,7 +657,11 @@ func (s *session) runRead(errGroupCtx context.Context, errGroup *errgroup.Group,
+ 		answer: []byte(answer.SDP),
+ 	}
+ 
+-	go s.readRemoteCandidates(s.offer, pc)
++	s.remoteCandidates.Add(1)
++	go func() {
++		defer s.remoteCandidates.Done()
++		s.readRemoteCandidates(s.offer, pc)
++	}()
+ 
+ 	err = pc.WaitUntilConnected(time.Duration(s.handshakeTimeout))
+ 	if err != nil {
+@@ -675,6 +715,12 @@ func (s *session) readRemoteCandidates(offer []byte, pc *webrtc.PeerConnection)
+ 	for {
+ 		select {
+ 		case req := <-s.chAddCandidates:
++			if s.completion != nil {
++				if err := s.completion.WaitBarrier(wbbcompletion.DuringICEPatch); err != nil || s.completion.IsClosing() {
++					req.res <- addSessionCandidatesRes{err: fmt.Errorf("operation closing")}
++					return
++				}
++			}
+ 			// do not check for errors since credentials are optional
+ 			ufrag, pwd, _ := sdpFragmentToCredentials(req.fragment)
+ 
+@@ -729,12 +775,21 @@ func (s *session) readRemoteCandidates(offer []byte, pc *webrtc.PeerConnection)
+ }
+ 
+ func (s *session) initialRequest(req initialRequestReq) initialRequestRes {
+-	req.res = make(chan initialRequestRes)
++	req.res = make(chan initialRequestRes, 1)
+ 
+ 	select {
+ 	case s.chInitialRequest <- req:
+-		return <-req.res
++		select {
++		case res := <-req.res:
++			return res
++		case <-req.ctx.Done():
++			return initialRequestRes{err: fmt.Errorf("request cancelled"), errStatusCode: http.StatusRequestTimeout}
++		case <-s.ctx.Done():
++			return initialRequestRes{err: fmt.Errorf("terminated"), errStatusCode: http.StatusInternalServerError}
++		}
+ 
++	case <-req.ctx.Done():
++		return initialRequestRes{err: fmt.Errorf("request cancelled"), errStatusCode: http.StatusRequestTimeout}
+ 	case <-s.ctx.Done():
+ 		return initialRequestRes{err: fmt.Errorf("terminated"), errStatusCode: http.StatusInternalServerError}
+ 	}
+@@ -746,7 +801,12 @@ func (s *session) addCandidates(
+ ) addSessionCandidatesRes {
+ 	select {
+ 	case s.chAddCandidates <- req:
+-		return <-req.res
++		select {
++		case res := <-req.res:
++			return res
++		case <-s.ctx.Done():
++			return addSessionCandidatesRes{err: fmt.Errorf("terminated")}
++		}
+ 
+ 	case <-s.ctx.Done():
+ 		return addSessionCandidatesRes{err: fmt.Errorf("terminated")}
+diff --git a/internal/wbbcompletion/barrier.go b/internal/wbbcompletion/barrier.go
+new file mode 100644
+index 0000000..98e89eb
+--- /dev/null
++++ b/internal/wbbcompletion/barrier.go
+@@ -0,0 +1,129 @@
++package wbbcompletion
++
++import (
++	"errors"
++	"sync"
++)
++
++const (
++	BeforeRegister           = "before_register"
++	BeforeSessionInitialize  = "before_session_initialize"
++	DuringAuth               = "during_auth"
++	BeforeAddPublisher       = "before_add_publisher"
++	BeforeCompletionResponse = "before_completion_response"
++	DuringRTPCallback        = "during_rtp_callback"
++	DuringPLI                = "during_pli"
++	DuringICEPatch           = "during_ice_patch"
++)
++
++type gate struct {
++	release chan struct{}
++	arrived bool
++}
++
++type BarrierState struct {
++	Armed   bool `json:"armed"`
++	Arrived bool `json:"arrived"`
++}
++
++type barriers struct {
++	sync.Mutex
++	enabled bool
++	gates   map[string]*gate
++	abort   chan struct{}
++	aborted bool
++}
++
++func (r *Registry) EnableBarriers() {
++	r.barriers.Lock()
++	r.barriers.enabled = true
++	r.barriers.gates = make(map[string]*gate)
++	r.barriers.abort = make(chan struct{})
++	r.barriers.aborted = false
++	r.barriers.Unlock()
++}
++
++func validStage(stage string) bool {
++	switch stage {
++	case BeforeRegister, BeforeSessionInitialize, DuringAuth, BeforeAddPublisher, BeforeCompletionResponse,
++		DuringRTPCallback, DuringPLI, DuringICEPatch:
++		return true
++	default:
++		return false
++	}
++}
++
++func barrierKey(stage, id string) string { return stage + "/" + id }
++
++func (r *Registry) ArmBarrier(stage, id string) error {
++	if !validStage(stage) || id == "" {
++		return errors.New("invalid barrier")
++	}
++	r.barriers.Lock()
++	defer r.barriers.Unlock()
++	if !r.barriers.enabled || r.barriers.aborted {
++		return errors.New("barriers disabled")
++	}
++	k := barrierKey(stage, id)
++	if _, ok := r.barriers.gates[k]; ok {
++		return errors.New("barrier already armed")
++	}
++	r.barriers.gates[k] = &gate{release: make(chan struct{})}
++	return nil
++}
++
++func (r *Registry) ReleaseBarrier(stage, id string) error {
++	r.barriers.Lock()
++	defer r.barriers.Unlock()
++	g, ok := r.barriers.gates[barrierKey(stage, id)]
++	if !ok {
++		return errors.New("barrier absent")
++	}
++	close(g.release)
++	delete(r.barriers.gates, barrierKey(stage, id))
++	return nil
++}
++
++func (r *Registry) BarrierStatus(stage, id string) BarrierState {
++	r.barriers.Lock()
++	defer r.barriers.Unlock()
++	g, ok := r.barriers.gates[barrierKey(stage, id)]
++	if !ok {
++		return BarrierState{}
++	}
++	return BarrierState{Armed: true, Arrived: g.arrived}
++}
++
++// Held work remains scheduled after operation cancellation. Only explicit
++// release or full experiment abort/process exit discharges it.
++func (r *Registry) WaitBarrier(stage, id string) error {
++	r.barriers.Lock()
++	g := r.barriers.gates[barrierKey(stage, id)]
++	if g != nil {
++		g.arrived = true
++	}
++	abort := r.barriers.abort
++	aborted := r.barriers.aborted
++	r.barriers.Unlock()
++	if aborted {
++		return errors.New("experiment barrier aborted")
++	}
++	if g == nil {
++		return nil
++	}
++	select {
++	case <-g.release:
++		return nil
++	case <-abort:
++		return errors.New("experiment barrier aborted")
++	}
++}
++
++func (r *Registry) AbortBarriers() {
++	r.barriers.Lock()
++	if r.barriers.enabled && !r.barriers.aborted {
++		close(r.barriers.abort)
++		r.barriers.aborted = true
++	}
++	r.barriers.Unlock()
++}
+diff --git a/internal/wbbcompletion/http.go b/internal/wbbcompletion/http.go
+new file mode 100644
+index 0000000..aee38c3
+--- /dev/null
++++ b/internal/wbbcompletion/http.go
+@@ -0,0 +1,191 @@
++package wbbcompletion
++
++import (
++	"context"
++	"crypto/hmac"
++	"crypto/sha256"
++	"crypto/subtle"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"net"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/google/uuid"
++)
++
++// Sign is the documented internal-only HMAC wire format used by the spike
++// harness. It is deliberately separate from MediaMTX's public path auth.
++func Sign(key []byte, parts ...string) string {
++	h := hmac.New(sha256.New, key)
++	for _, part := range parts {
++		h.Write([]byte(strconv.Itoa(len(part))))
++		h.Write([]byte{':'})
++		h.Write([]byte(part))
++	}
++	return hex.EncodeToString(h.Sum(nil))
++}
++
++func equalSignature(got, expected string) bool {
++	if len(got) != len(expected) {
++		return false
++	}
++	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
++}
++
++func (r *Registry) VerifyPublish(req *http.Request, key []byte, path string, offer []byte) (string, error) {
++	id := req.Header.Get("X-WBB-Operation")
++	if _, err := uuid.Parse(id); err != nil {
++		return "", errors.New("invalid operation")
++	}
++	if req.Header.Get("X-WBB-Slot") != r.slot || req.Header.Get("X-WBB-Root") != r.root || req.Header.Get("X-WBB-Epoch") != r.epoch {
++		return "", errors.New("wrong lifecycle")
++	}
++	digest := sha256.Sum256(offer)
++	expected := Sign(key, "publish", r.root, r.slot, r.epoch, id, path, hex.EncodeToString(digest[:]))
++	if !equalSignature(req.Header.Get("X-WBB-Signature"), expected) {
++		return "", errors.New("invalid signature")
++	}
++	return id, nil
++}
++
++func OfferDigest(offer []byte) string {
++	digest := sha256.Sum256(offer)
++	return hex.EncodeToString(digest[:])
++}
++
++type HTTP struct {
++	registry *Registry
++	key      []byte
++	server   *http.Server
++	listener net.Listener
++}
++
++func NewHTTP(registry *Registry, key []byte) (*HTTP, error) {
++	if registry == nil || len(key) < 32 {
++		return nil, errors.New("completion HTTP requires a registry and 32-byte key")
++	}
++	return &HTTP{registry: registry, key: append([]byte(nil), key...)}, nil
++}
++
++func (h *HTTP) authorized(req *http.Request, purpose, epoch, id string) bool {
++	return equalSignature(req.Header.Get("X-WBB-Signature"), Sign(h.key, purpose, h.registry.root, h.registry.slot, epoch, id))
++}
++
++func (h *HTTP) authorizedBarrier(req *http.Request, purpose, stage, id string) bool {
++	if req.Header.Get("X-WBB-Epoch") != h.registry.epoch {
++		return false
++	}
++	return equalSignature(req.Header.Get("X-WBB-Signature"), Sign(h.key, purpose, h.registry.root, h.registry.slot, h.registry.epoch, stage, id))
++}
++
++func (h *HTTP) Handler() http.Handler {
++	mux := http.NewServeMux()
++	mux.HandleFunc("POST /v3/wbb/barriers/{stage}/{id}/arm", func(w http.ResponseWriter, req *http.Request) {
++		stage, id := req.PathValue("stage"), req.PathValue("id")
++		if !h.authorizedBarrier(req, "barrier-arm", stage, id) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		if err := h.registry.ArmBarrier(stage, id); err != nil {
++			http.Error(w, "barrier unavailable", http.StatusConflict)
++			return
++		}
++		writeJSON(w, http.StatusOK, h.registry.BarrierStatus(stage, id))
++	})
++	mux.HandleFunc("POST /v3/wbb/barriers/{stage}/{id}/release", func(w http.ResponseWriter, req *http.Request) {
++		stage, id := req.PathValue("stage"), req.PathValue("id")
++		if !h.authorizedBarrier(req, "barrier-release", stage, id) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		if err := h.registry.ReleaseBarrier(stage, id); err != nil {
++			http.Error(w, "barrier unavailable", http.StatusConflict)
++			return
++		}
++		writeJSON(w, http.StatusOK, BarrierState{})
++	})
++	mux.HandleFunc("GET /v3/wbb/barriers/{stage}/{id}", func(w http.ResponseWriter, req *http.Request) {
++		stage, id := req.PathValue("stage"), req.PathValue("id")
++		if !h.authorizedBarrier(req, "barrier-query", stage, id) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		writeJSON(w, http.StatusOK, h.registry.BarrierStatus(stage, id))
++	})
++	mux.HandleFunc("GET /v3/wbb/lifecycle", func(w http.ResponseWriter, req *http.Request) {
++		if !h.authorized(req, "lifecycle", "", "") {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		writeJSON(w, http.StatusOK, h.registry.Lifecycle())
++	})
++	mux.HandleFunc("GET /v3/wbb/operations/{id}", func(w http.ResponseWriter, req *http.Request) {
++		id := req.PathValue("id")
++		epoch := req.URL.Query().Get("epoch")
++		if _, err := uuid.Parse(id); err != nil || epoch == "" {
++			http.Error(w, "invalid operation", http.StatusBadRequest)
++			return
++		}
++		if !h.authorized(req, "query", epoch, id) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		writeJSON(w, http.StatusOK, h.registry.QueryEpoch(epoch, id))
++	})
++	mux.HandleFunc("POST /v3/wbb/operations/{id}/close", func(w http.ResponseWriter, req *http.Request) {
++		id := req.PathValue("id")
++		epoch := req.Header.Get("X-WBB-Epoch")
++		if _, err := uuid.Parse(id); err != nil || epoch == "" {
++			http.Error(w, "invalid operation", http.StatusBadRequest)
++			return
++		}
++		if !h.authorized(req, "close", epoch, id) {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		if epoch != h.registry.epoch {
++			writeJSON(w, http.StatusOK, h.registry.QueryEpoch(epoch, id))
++			return
++		}
++		s := h.registry.CloseOperation(id)
++		if s.State == CapacityUnknown {
++			writeJSON(w, http.StatusServiceUnavailable, s)
++			return
++		}
++		writeJSON(w, http.StatusAccepted, s)
++	})
++	return mux
++}
++
++func writeJSON(w http.ResponseWriter, status int, v any) {
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	json.NewEncoder(w).Encode(v) //nolint:errcheck
++}
++
++func (h *HTTP) Start(address string) error {
++	if address == "" || strings.HasPrefix(address, ":") {
++		return errors.New("management address must be explicit")
++	}
++	ln, err := net.Listen("tcp", address)
++	if err != nil {
++		return err
++	}
++	h.listener = ln
++	h.server = &http.Server{Handler: h.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}
++	go h.server.Serve(ln) //nolint:errcheck
++	return nil
++}
++
++func (h *HTTP) Stop() {
++	if h.server == nil {
++		return
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	h.server.Shutdown(ctx) //nolint:errcheck
++}
+diff --git a/internal/wbbcompletion/http_test.go b/internal/wbbcompletion/http_test.go
+new file mode 100644
+index 0000000..682e599
+--- /dev/null
++++ b/internal/wbbcompletion/http_test.go
+@@ -0,0 +1,79 @@
++package wbbcompletion
++
++import (
++	"bytes"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++const testOperationID = "7b639209-c934-4a9d-84e1-eed077b1a765"
++
++func TestInternalHTTPAndPublishTuple(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 3)
++	key := bytes.Repeat([]byte{0x31}, 32)
++	h, err := NewHTTP(r, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	get := httptest.NewRequest(http.MethodGet, "/v3/wbb/lifecycle", nil)
++	get.Header.Set("X-WBB-Signature", Sign(key, "lifecycle", r.Root(), r.Slot(), "", ""))
++	w := httptest.NewRecorder()
++	h.Handler().ServeHTTP(w, get)
++	if w.Code != 200 {
++		t.Fatalf("lifecycle status %d", w.Code)
++	}
++	var lifecycle Snapshot
++	if err := json.Unmarshal(w.Body.Bytes(), &lifecycle); err != nil {
++		t.Fatal(err)
++	}
++	if lifecycle.Epoch != "epoch-a" || lifecycle.Root != "test-root" || lifecycle.ContractVersion != ContractVersion {
++		t.Fatal("lifecycle tuple omitted")
++	}
++
++	offer := []byte("fixed-sdp")
++	req := httptest.NewRequest(http.MethodPost, "/wbb/one/1/source/whip", bytes.NewReader(offer))
++	req.Header.Set("X-WBB-Operation", testOperationID)
++	req.Header.Set("X-WBB-Slot", r.Slot())
++	req.Header.Set("X-WBB-Root", r.Root())
++	req.Header.Set("X-WBB-Epoch", r.Epoch())
++	req.Header.Set("X-WBB-Signature", Sign(key, "publish", r.Root(), r.Slot(), r.Epoch(), testOperationID, "wbb/one/1/source", OfferDigest(offer)))
++	if id, err := r.VerifyPublish(req, key, "wbb/one/1/source", offer); err != nil || id != testOperationID {
++		t.Fatalf("valid tuple rejected: %v", err)
++	}
++	if _, err := r.VerifyPublish(req, key, "wbb/other/1/source", offer); err == nil {
++		t.Fatal("different path accepted")
++	}
++	if _, err := r.VerifyPublish(req, key, "wbb/one/1/source", []byte("changed")); err == nil {
++		t.Fatal("different SDP accepted")
++	}
++	req.Header.Set("X-WBB-Epoch", "epoch-b")
++	if _, err := r.VerifyPublish(req, key, "wbb/one/1/source", offer); err == nil {
++		t.Fatal("different epoch accepted")
++	}
++}
++
++func TestBarrierSignatureBoundToEpoch(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-b", 2)
++	r.EnableBarriers()
++	key := bytes.Repeat([]byte{0x32}, 32)
++	h, _ := NewHTTP(r, key)
++	url := "/v3/wbb/barriers/before_register/" + testOperationID + "/arm"
++	request := func(epoch string) *http.Request {
++		req := httptest.NewRequest(http.MethodPost, url, nil)
++		req.Header.Set("X-WBB-Epoch", epoch)
++		req.Header.Set("X-WBB-Signature", Sign(key, "barrier-arm", r.Root(), r.Slot(), epoch, BeforeRegister, testOperationID))
++		return req
++	}
++	w := httptest.NewRecorder()
++	h.Handler().ServeHTTP(w, request("epoch-a"))
++	if w.Code != http.StatusUnauthorized {
++		t.Fatalf("old epoch arm status %d", w.Code)
++	}
++	w = httptest.NewRecorder()
++	h.Handler().ServeHTTP(w, request("epoch-b"))
++	if w.Code != http.StatusOK {
++		t.Fatalf("current epoch arm status %d", w.Code)
++	}
++}
+diff --git a/internal/wbbcompletion/registry.go b/internal/wbbcompletion/registry.go
+new file mode 100644
+index 0000000..e14fb9e
+--- /dev/null
++++ b/internal/wbbcompletion/registry.go
+@@ -0,0 +1,529 @@
++// Package wbbcompletion is an isolated, Linux-only experiment for proving
++// completion of a MediaMTX publish operation. It is not a public API.
++package wbbcompletion
++
++import (
++	"bytes"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sync"
++	"syscall"
++	"time"
++)
++
++type State string
++
++const ContractVersion = "wbb-media-completion/1"
++
++const (
++	Active          State = "active"
++	NeverRegistered State = "never-registered"
++	Closing         State = "closing"
++	Completed       State = "completed"
++	UnknownEpoch    State = "unknown_epoch"
++	CapacityUnknown State = "capacity_unknown"
++)
++
++var (
++	ErrClosed    = errors.New("operation closed")
++	ErrDuplicate = errors.New("operation already registered")
++	ErrConflict  = errors.New("operation tuple conflict")
++	ErrCapacity  = errors.New("operation registry full")
++)
++
++type Snapshot struct {
++	ContractVersion string `json:"contract_version"`
++	Slot            string `json:"slot"`
++	Root            string `json:"root"`
++	Epoch           string `json:"epoch"`
++	EpochSequence   uint64 `json:"epoch_sequence"`
++	Operation       string `json:"operation"`
++	State           State  `json:"state"`
++	Registered      bool   `json:"registered"`
++	Sequence        uint64 `json:"sequence"`
++}
++
++type anchor struct {
++	Slot string `json:"slot"`
++	Root string `json:"root"`
++}
++
++type history struct {
++	Slot      string        `json:"slot"`
++	Root      string        `json:"root"`
++	LockDev   uint64        `json:"lock_dev"`
++	LockIno   uint64        `json:"lock_ino"`
++	LockToken string        `json:"lock_token"`
++	Epochs    []epochRecord `json:"epochs"`
++	Checksum  string        `json:"checksum,omitempty"`
++}
++
++type epochRecord struct {
++	ID       string `json:"id"`
++	Sequence uint64 `json:"sequence"`
++}
++
++type operation struct {
++	path, digest string
++	registered   bool
++	closing      bool
++	refs         int
++	stop         func()
++}
++
++// Registry is owned by the MediaMTX OS process. Its lock FD is deliberately
++// never closed on the accepted path: a graceful shutdown cannot release proof
++// while an unjoined handler or child is still running.
++type Registry struct {
++	mu            sync.Mutex
++	slot          string
++	root          string
++	epoch         string
++	epochSequence uint64
++	seq           uint64
++	capacity      int
++	ops           map[string]*operation
++	lockFD        *os.File
++	history       history
++	barriers      barriers
++}
++
++var processLocks struct {
++	sync.Mutex
++	files []*os.File
++}
++
++// faultPause is available only in the isolated barrier-enabled experiment.
++// A separate verifier observes the marker, then kills the actual Linux OS
++// process at a persistence boundary. It is never enabled by normal startup.
++func faultPause(stage string) error {
++	if os.Getenv("WBB_COMPLETION_BARRIERS") != "1" || os.Getenv("WBB_COMPLETION_FAULT_STAGE") != stage {
++		return nil
++	}
++	marker := os.Getenv("WBB_COMPLETION_FAULT_MARKER")
++	if marker == "" {
++		return errors.New("fault marker unavailable")
++	}
++	if err := os.WriteFile(marker, []byte(stage), 0600); err != nil {
++		return err
++	}
++	for {
++		time.Sleep(time.Hour)
++	}
++}
++
++func loadAnchor(path string) (anchor, error) {
++	var a anchor
++	b, err := os.ReadFile(path)
++	if err != nil {
++		return a, err
++	}
++	if err = json.Unmarshal(b, &a); err != nil {
++		return a, err
++	}
++	if a.Slot == "" || a.Root == "" {
++		return a, errors.New("incomplete bootstrap anchor")
++	}
++	return a, nil
++}
++
++func statLock(f *os.File) (uint64, uint64, error) {
++	fi, err := f.Stat()
++	if err != nil {
++		return 0, 0, err
++	}
++	s, ok := fi.Sys().(*syscall.Stat_t)
++	if !ok {
++		return 0, 0, errors.New("lock inode unavailable")
++	}
++	return uint64(s.Dev), uint64(s.Ino), nil
++}
++
++func writeAtomic(dir, name string, v any) error {
++	b, err := json.Marshal(v)
++	if err != nil {
++		return err
++	}
++	f, err := os.CreateTemp(dir, ".wbb-history-*")
++	if err != nil {
++		return err
++	}
++	defer os.Remove(f.Name())
++	if _, err = f.Write(b); err != nil {
++		f.Close()
++		return err
++	}
++	if err = f.Sync(); err != nil {
++		f.Close()
++		return err
++	}
++	if err = faultPause("after_file_sync"); err != nil {
++		f.Close()
++		return err
++	}
++	if err = f.Close(); err != nil {
++		return err
++	}
++	if err = os.Rename(f.Name(), filepath.Join(dir, name)); err != nil {
++		return err
++	}
++	if err = faultPause("after_rename"); err != nil {
++		return err
++	}
++	d, err := os.Open(dir)
++	if err != nil {
++		return err
++	}
++	defer d.Close()
++	if err = d.Sync(); err != nil {
++		return err
++	}
++	return faultPause("after_dir_sync")
++}
++
++// The checksum detects accidental edits to the exact persisted history. It
++// does not authenticate the volume or protect against a copied old snapshot.
++func historyChecksum(h history) (string, error) {
++	h.Checksum = ""
++	b, err := json.Marshal(h)
++	if err != nil {
++		return "", err
++	}
++	sum := sha256.Sum256(b)
++	return hex.EncodeToString(sum[:]), nil
++}
++
++func writeHistoryAtomic(dir string, h *history) error {
++	checksum, err := historyChecksum(*h)
++	if err != nil {
++		return err
++	}
++	h.Checksum = checksum
++	return writeAtomic(dir, "history.json", h)
++}
++
++// Bootstrap is an explicit, one-shot provisioning action. Normal Open never
++// creates an empty history; deleting the volume therefore fails closed.
++func Bootstrap(anchorPath, dir string) error {
++	a, err := loadAnchor(anchorPath)
++	if err != nil {
++		return err
++	}
++	if err = os.MkdirAll(dir, 0700); err != nil {
++		return err
++	}
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		return err
++	}
++	if len(entries) != 0 {
++		return errors.New("bootstrap directory is not empty")
++	}
++	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
++	if err != nil {
++		return err
++	}
++	defer f.Close()
++	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
++		return err
++	}
++	dev, ino, err := statLock(f)
++	if err != nil {
++		return err
++	}
++	lockToken := RandomID()
++	if _, err = f.WriteString(lockToken); err != nil {
++		return err
++	}
++	if err = f.Sync(); err != nil {
++		return err
++	}
++	h := history{Slot: a.Slot, Root: a.Root, LockDev: dev, LockIno: ino, LockToken: lockToken, Epochs: []epochRecord{}}
++	return writeHistoryAtomic(dir, &h)
++}
++
++func readHistory(path string, a anchor, lock *os.File) (history, error) {
++	var h history
++	b, err := os.ReadFile(path)
++	if err != nil {
++		return h, err
++	}
++	if err = json.Unmarshal(b, &h); err != nil {
++		return h, err
++	}
++	canonical, err := json.Marshal(h)
++	if err != nil {
++		return h, err
++	}
++	if !bytes.Equal(b, canonical) {
++		return h, errors.New("history encoding mismatch")
++	}
++	checksum, err := historyChecksum(h)
++	if err != nil {
++		return h, err
++	}
++	if len(h.Checksum) != 64 || h.Checksum != checksum {
++		return h, errors.New("history checksum mismatch")
++	}
++	dev, ino, err := statLock(lock)
++	if err != nil {
++		return h, err
++	}
++	info, err := lock.Stat()
++	if err != nil {
++		return h, err
++	}
++	lockBytes := make([]byte, 32)
++	if _, err = lock.ReadAt(lockBytes, 0); err != nil {
++		return h, err
++	}
++	if h.Slot != a.Slot || h.Root != a.Root || h.LockDev != dev || h.LockIno != ino ||
++		len(h.LockToken) != 32 || info.Size() != 32 || h.LockToken != string(lockBytes) || h.Epochs == nil {
++		return h, errors.New("bootstrap anchor, slot, or lock inode mismatch")
++	}
++	seen := make(map[string]bool, len(h.Epochs))
++	for i, epoch := range h.Epochs {
++		if epoch.Sequence != uint64(i+1) || len(epoch.ID) != 32 || seen[epoch.ID] {
++			return h, errors.New("epoch history discontinuity")
++		}
++		seen[epoch.ID] = true
++	}
++	return h, nil
++}
++
++// Open validates immutable history on both sides of the same-inode flock,
++// persists the next epoch, and only then permits requests.
++func Open(anchorPath, dir string, capacity int) (_ *Registry, err error) {
++	if capacity < 1 {
++		return nil, errors.New("capacity must be positive")
++	}
++	a, err := loadAnchor(anchorPath)
++	if err != nil {
++		return nil, err
++	}
++	lockPath := filepath.Join(dir, "lock")
++	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
++	if err != nil {
++		return nil, err
++	}
++	accepted := false
++	defer func() {
++		if !accepted {
++			f.Close()
++		}
++	}()
++	path := filepath.Join(dir, "history.json")
++	if _, err = readHistory(path, a, f); err != nil {
++		return nil, err
++	}
++	if err = faultPause("before_lock"); err != nil {
++		return nil, err
++	}
++	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
++		return nil, err
++	}
++	if err = faultPause("after_lock"); err != nil {
++		return nil, err
++	}
++	h, err := readHistory(path, a, f)
++	if err != nil {
++		return nil, err
++	}
++	current, err := os.Stat(lockPath)
++	if err != nil {
++		return nil, err
++	}
++	opened, err := f.Stat()
++	if err != nil {
++		return nil, err
++	}
++	if !os.SameFile(current, opened) {
++		return nil, errors.New("lock path replaced")
++	}
++	epochID := RandomID()
++	for _, previous := range h.Epochs {
++		if previous.ID == epochID {
++			return nil, errors.New("epoch id collision")
++		}
++	}
++	h.Epochs = append(h.Epochs, epochRecord{ID: epochID, Sequence: uint64(len(h.Epochs) + 1)})
++	if err = faultPause("before_history_write"); err != nil {
++		return nil, err
++	}
++	if err = writeHistoryAtomic(dir, &h); err != nil {
++		return nil, err
++	}
++	if err = faultPause("before_accept"); err != nil {
++		return nil, err
++	}
++	r := &Registry{slot: a.Slot, root: a.Root, epoch: epochID, epochSequence: uint64(len(h.Epochs)), capacity: capacity, ops: make(map[string]*operation), lockFD: f, history: h}
++	processLocks.Lock()
++	processLocks.files = append(processLocks.files, f)
++	processLocks.Unlock()
++	accepted = true
++	return r, nil
++}
++
++func newMemoryRegistry(slot string, epoch string, capacity int) *Registry {
++	return &Registry{slot: slot, root: "test-root", epoch: epoch, epochSequence: 1, capacity: capacity, ops: make(map[string]*operation)}
++}
++
++func (r *Registry) Epoch() string { return r.epoch }
++func (r *Registry) Slot() string  { return r.slot }
++func (r *Registry) Root() string  { return r.root }
++
++func (r *Registry) Lifecycle() Snapshot {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return Snapshot{ContractVersion: ContractVersion, Slot: r.slot, Root: r.root, Epoch: r.epoch, EpochSequence: r.epochSequence, Sequence: r.seq}
++}
++
++func (r *Registry) Begin(id, path, digest string) (*Operation, error) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	if id == "" || path == "" || digest == "" {
++		return nil, ErrConflict
++	}
++	if old, ok := r.ops[id]; ok {
++		if old.registered && (old.path != path || old.digest != digest) {
++			return nil, ErrConflict
++		}
++		if old.closing {
++			return nil, ErrClosed
++		}
++		return nil, ErrDuplicate
++	}
++	if len(r.ops) >= r.capacity {
++		return nil, ErrCapacity
++	}
++	r.ops[id] = &operation{path: path, digest: digest, registered: true, refs: 1}
++	r.seq++
++	return &Operation{registry: r, id: id}, nil
++}
++
++type Operation struct {
++	registry *Registry
++	id       string
++}
++
++func (o *Operation) ID() string { return o.id }
++
++func (o *Operation) WaitBarrier(stage string) error { return o.registry.WaitBarrier(stage, o.id) }
++
++func (o *Operation) IsClosing() bool {
++	r := o.registry
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return r.ops[o.id].closing
++}
++
++func (o *Operation) AttachSession(stop func()) {
++	r := o.registry
++	r.mu.Lock()
++	op := r.ops[o.id]
++	op.refs++
++	op.stop = stop
++	closing := op.closing
++	r.mu.Unlock()
++	if closing {
++		stop()
++	}
++}
++
++func (o *Operation) done() {
++	r := o.registry
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	op := r.ops[o.id]
++	if op.refs <= 0 {
++		panic("operation refcount underflow")
++	}
++	op.refs--
++	if op.refs == 0 {
++		op.stop = nil
++	}
++	r.seq++
++}
++
++func (o *Operation) DoneCreation() { o.done() }
++func (o *Operation) DoneSession()  { o.done() }
++
++func (r *Registry) snapshotLocked(id string) Snapshot {
++	s := Snapshot{ContractVersion: ContractVersion, Slot: r.slot, Root: r.root, Epoch: r.epoch, EpochSequence: r.epochSequence, Operation: id, State: NeverRegistered, Sequence: r.seq}
++	if op, ok := r.ops[id]; ok {
++		s.Registered = op.registered
++		switch {
++		case op.closing && op.refs == 0:
++			s.State = Completed
++		case op.closing:
++			s.State = Closing
++		default:
++			s.State = Active
++		}
++	}
++	return s
++}
++
++func (r *Registry) Query(id string) Snapshot {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return r.snapshotLocked(id)
++}
++
++func (r *Registry) QueryEpoch(epoch string, id string) Snapshot {
++	if epoch == r.epoch {
++		return r.Query(id)
++	}
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	s := Snapshot{ContractVersion: ContractVersion, Slot: r.slot, Root: r.root, Epoch: epoch, Operation: id, State: UnknownEpoch, Sequence: r.seq}
++	for _, previous := range r.history.Epochs {
++		if previous.ID == epoch && previous.Sequence < r.epochSequence {
++			s.State = Completed
++			s.EpochSequence = previous.Sequence
++			break
++		}
++	}
++	return s
++}
++
++func (r *Registry) CloseOperation(id string) Snapshot {
++	r.mu.Lock()
++	op, ok := r.ops[id]
++	if !ok && len(r.ops) >= r.capacity {
++		s := Snapshot{ContractVersion: ContractVersion, Slot: r.slot, Root: r.root, Epoch: r.epoch, EpochSequence: r.epochSequence, Operation: id, State: CapacityUnknown, Sequence: r.seq}
++		r.mu.Unlock()
++		return s
++	}
++	if !ok {
++		op = &operation{closing: true}
++		r.ops[id] = op
++		r.seq++
++	}
++	if !op.closing {
++		op.closing = true
++		r.seq++
++	}
++	stop := op.stop
++	s := r.snapshotLocked(id)
++	r.mu.Unlock()
++	if stop != nil {
++		stop()
++	}
++	return s
++}
++
++// RandomID is for isolated bootstrap and tests, not a credential.
++func RandomID() string {
++	var b [16]byte
++	if _, err := rand.Read(b[:]); err != nil {
++		panic(fmt.Errorf("random id: %w", err))
++	}
++	return hex.EncodeToString(b[:])
++}
+diff --git a/internal/wbbcompletion/registry_test.go b/internal/wbbcompletion/registry_test.go
+new file mode 100644
+index 0000000..0159ccd
+--- /dev/null
++++ b/internal/wbbcompletion/registry_test.go
+@@ -0,0 +1,506 @@
++package wbbcompletion
++
++import (
++	"encoding/json"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"sync"
++	"testing"
++	"time"
++)
++
++func TestKilledProcessAtPersistenceBoundaries(t *testing.T) {
++	for _, ca := range []struct {
++		stage     string
++		persisted int
++	}{
++		{"before_lock", 0},
++		{"after_lock", 0},
++		{"before_history_write", 0},
++		{"after_file_sync", 0},
++		{"after_rename", 1},
++		{"after_dir_sync", 1},
++		{"before_accept", 1},
++	} {
++		t.Run(ca.stage, func(t *testing.T) {
++			dir := t.TempDir()
++			anchor := filepath.Join(t.TempDir(), "anchor")
++			if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++				t.Fatal(err)
++			}
++			if err := Bootstrap(anchor, dir); err != nil {
++				t.Fatal(err)
++			}
++			faultMarker := filepath.Join(t.TempDir(), "fault")
++			resultMarker := filepath.Join(t.TempDir(), "result")
++			cmd := exec.Command(os.Args[0], "-test.run=^TestEpochProcessHelper$")
++			cmd.Env = append(os.Environ(),
++				"WBB_EPOCH_HELPER=1", "WBB_ANCHOR="+anchor, "WBB_HISTORY_DIR="+dir, "WBB_MARKER="+resultMarker,
++				"WBB_COMPLETION_BARRIERS=1", "WBB_COMPLETION_FAULT_STAGE="+ca.stage, "WBB_COMPLETION_FAULT_MARKER="+faultMarker)
++			if err := cmd.Start(); err != nil {
++				t.Fatal(err)
++			}
++			defer func() {
++				if cmd.ProcessState == nil {
++					cmd.Process.Kill()
++					cmd.Wait()
++				}
++			}()
++			deadline := time.Now().Add(3 * time.Second)
++			var marker []byte
++			for time.Now().Before(deadline) {
++				marker, _ = os.ReadFile(faultMarker)
++				if string(marker) == ca.stage {
++					break
++				}
++				time.Sleep(10 * time.Millisecond)
++			}
++			if string(marker) != ca.stage {
++				t.Fatal("child did not reach persistence boundary")
++			}
++			if ca.stage != "before_lock" {
++				if _, err := Open(anchor, dir, 2); err == nil {
++					t.Fatal("second process acquired live lock")
++				}
++			}
++			if err := cmd.Process.Kill(); err != nil {
++				t.Fatal(err)
++			}
++			if err := cmd.Wait(); err == nil {
++				t.Fatal("child was not killed")
++			}
++			var h history
++			encoded, err := os.ReadFile(filepath.Join(dir, "history.json"))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := json.Unmarshal(encoded, &h); err != nil {
++				t.Fatal(err)
++			}
++			if len(h.Epochs) != ca.persisted {
++				t.Fatalf("persisted epochs=%d want=%d", len(h.Epochs), ca.persisted)
++			}
++			r, err := Open(anchor, dir, 2)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if r.Lifecycle().EpochSequence != uint64(ca.persisted+1) {
++				t.Fatal("restart sequence mismatch")
++			}
++			if ca.persisted == 1 && r.QueryEpoch(h.Epochs[0].ID, "old").State != Completed {
++				t.Fatal("persisted killed epoch not retired")
++			}
++		})
++	}
++}
++
++func TestExistingHistoryIntegrityRejectsWithoutRewrite(t *testing.T) {
++	for _, scenario := range []string{"empty", "missing_history", "corrupt_history", "extra_json_field", "wrong_slot", "wrong_root", "replaced_lock", "modified_lock_contents"} {
++		t.Run(scenario, func(t *testing.T) {
++			dir := t.TempDir()
++			anchor := filepath.Join(t.TempDir(), "anchor")
++			if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++				t.Fatal(err)
++			}
++			if scenario != "empty" {
++				if err := Bootstrap(anchor, dir); err != nil {
++					t.Fatal(err)
++				}
++			}
++			var before []byte
++			var err error
++			historyPath := filepath.Join(dir, "history.json")
++			switch scenario {
++			case "missing_history":
++				if err := os.Remove(historyPath); err != nil {
++					t.Fatal(err)
++				}
++			case "corrupt_history":
++				if err := os.WriteFile(historyPath, []byte("{"), 0600); err != nil {
++					t.Fatal(err)
++				}
++			case "extra_json_field":
++				original, err := os.ReadFile(historyPath)
++				if err != nil {
++					t.Fatal(err)
++				}
++				withExtra := append(append([]byte(nil), original[:len(original)-1]...), []byte(`,"extra":1}`)...)
++				if err := os.WriteFile(historyPath, withExtra, 0600); err != nil {
++					t.Fatal(err)
++				}
++			case "wrong_slot":
++				if err := os.WriteFile(anchor, []byte(`{"slot":"other","root":"r"}`), 0600); err != nil {
++					t.Fatal(err)
++				}
++			case "wrong_root":
++				if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"other"}`), 0600); err != nil {
++					t.Fatal(err)
++				}
++			case "replaced_lock":
++				oldLock, err := os.Open(filepath.Join(dir, "lock"))
++				if err != nil {
++					t.Fatal(err)
++				}
++				defer oldLock.Close() // keep the old inode allocated during replacement
++				if err := os.Remove(filepath.Join(dir, "lock")); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.WriteFile(filepath.Join(dir, "lock"), nil, 0600); err != nil {
++					t.Fatal(err)
++				}
++				oldInfo, err := oldLock.Stat()
++				if err != nil {
++					t.Fatal(err)
++				}
++				newInfo, err := os.Stat(filepath.Join(dir, "lock"))
++				if err != nil {
++					t.Fatal(err)
++				}
++				if os.SameFile(oldInfo, newInfo) {
++					t.Fatal("replacement did not change inode")
++				}
++			case "modified_lock_contents":
++				if err := os.WriteFile(filepath.Join(dir, "lock"), []byte("00000000000000000000000000000000"), 0600); err != nil {
++					t.Fatal(err)
++				}
++			}
++			before, err = os.ReadFile(historyPath)
++			if scenario == "empty" || scenario == "missing_history" {
++				if !os.IsNotExist(err) {
++					t.Fatal("missing history unexpectedly present")
++				}
++			} else if err != nil {
++				t.Fatal(err)
++			}
++			if _, err := Open(anchor, dir, 2); err == nil {
++				t.Fatal("invalid history accepted")
++			}
++			after, afterErr := os.ReadFile(historyPath)
++			if scenario == "empty" || scenario == "missing_history" {
++				if !os.IsNotExist(afterErr) {
++					t.Fatal("invalid volume was initialized")
++				}
++			} else if afterErr != nil || string(after) != string(before) {
++				t.Fatal("invalid history was rewritten")
++			}
++		})
++	}
++}
++
++func TestHistoryChecksumRejectsWellFormedEpochMutation(t *testing.T) {
++	dir := t.TempDir()
++	anchorPath := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchorPath, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := Bootstrap(anchorPath, dir); err != nil {
++		t.Fatal(err)
++	}
++	marker := filepath.Join(t.TempDir(), "accepted")
++	cmd := exec.Command(os.Args[0], "-test.run=^TestEpochProcessHelper$")
++	cmd.Env = append(os.Environ(), "WBB_EPOCH_HELPER=1", "WBB_ANCHOR="+anchorPath, "WBB_HISTORY_DIR="+dir, "WBB_MARKER="+marker)
++	if err := cmd.Start(); err != nil {
++		t.Fatal(err)
++	}
++	defer func() {
++		if cmd.ProcessState == nil {
++			cmd.Process.Kill()
++			cmd.Wait()
++		}
++	}()
++	deadline := time.Now().Add(3 * time.Second)
++	for time.Now().Before(deadline) {
++		if b, _ := os.ReadFile(marker); len(b) > 0 {
++			break
++		}
++		time.Sleep(10 * time.Millisecond)
++	}
++	if b, _ := os.ReadFile(marker); len(b) == 0 {
++		t.Fatal("child never accepted epoch")
++	}
++	if err := cmd.Process.Kill(); err != nil {
++		t.Fatal(err)
++	}
++	if err := cmd.Wait(); err == nil {
++		t.Fatal("child was not killed")
++	}
++	path := filepath.Join(dir, "history.json")
++	encoded, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var h history
++	if err := json.Unmarshal(encoded, &h); err != nil {
++		t.Fatal(err)
++	}
++	if h.Epochs[0].ID[0] == '0' {
++		h.Epochs[0].ID = "1" + h.Epochs[0].ID[1:]
++	} else {
++		h.Epochs[0].ID = "0" + h.Epochs[0].ID[1:]
++	}
++	corrupted, err := json.Marshal(h)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, corrupted, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := Open(anchorPath, dir, 2); err == nil {
++		t.Fatal("well-formed corrupted history accepted")
++	}
++	after, err := os.ReadFile(path)
++	if err != nil || string(after) != string(corrupted) {
++		t.Fatal("rejected history was rewritten")
++	}
++}
++
++func TestBootstrapRequiredAndEpochContinuity(t *testing.T) {
++	dir := t.TempDir()
++	anchor := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchor, []byte(`{"slot":"slot-a","root":"root-a"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := Open(anchor, dir, 2); err == nil {
++		t.Fatal("empty history accepted without bootstrap")
++	}
++	if err := Bootstrap(anchor, dir); err != nil {
++		t.Fatal(err)
++	}
++	r, err := Open(anchor, dir, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(r.Epoch()) != 32 || r.Lifecycle().EpochSequence != 1 || r.Lifecycle().Root != "root-a" {
++		t.Fatalf("invalid lifecycle: epoch length=%d sequence=%d", len(r.Epoch()), r.Lifecycle().EpochSequence)
++	}
++	// A live registry must retain its lock until process exit. The same-process
++	// close path is intentionally absent; a second opener must be refused.
++	if _, err := Open(anchor, dir, 2); err == nil {
++		t.Fatal("second process accepted on the same lock inode")
++	}
++}
++
++func TestCloseBeforeCreateAndDuplicate(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 2)
++	if got := r.Query("never"); got.State != NeverRegistered {
++		t.Fatalf("never state = %s", got.State)
++	}
++	if got := r.CloseOperation("a"); got.State != Completed {
++		t.Fatalf("pre-create close = %s", got.State)
++	}
++	if _, err := r.Begin("a", "path", "digest"); err == nil {
++		t.Fatal("closed operation recreated")
++	}
++	op, err := r.Begin("b", "path", "digest")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := r.Begin("b", "path", "digest"); err == nil {
++		t.Fatal("duplicate created a second session")
++	}
++	if _, err := r.Begin("b", "other", "digest"); err == nil {
++		t.Fatal("conflicting operation accepted")
++	}
++	if got := r.CloseOperation("b"); got.State != Closing {
++		t.Fatalf("close while handler active = %s", got.State)
++	}
++	op.DoneCreation()
++	if got := r.Query("b"); got.State != Completed {
++		t.Fatalf("completion = %s", got.State)
++	}
++}
++
++func TestCapacityDoesNotEraseTombstones(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 1)
++	if got := r.CloseOperation("a"); got.State != Completed {
++		t.Fatalf("first close = %s", got.State)
++	}
++	if got := r.CloseOperation("b"); got.State != CapacityUnknown {
++		t.Fatalf("saturated close = %s", got.State)
++	}
++	if got := r.Query("a"); got.State != Completed {
++		t.Fatalf("tombstone lost: %s", got.State)
++	}
++}
++
++func TestCloseRaceWithSessionAttach(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 2)
++	op, err := r.Begin("a", "path", "digest")
++	if err != nil {
++		t.Fatal(err)
++	}
++	var wg sync.WaitGroup
++	wg.Add(1)
++	stopped := make(chan struct{})
++	go func() { defer wg.Done(); r.CloseOperation("a") }()
++	op.AttachSession(func() { close(stopped) })
++	select {
++	case <-stopped:
++	case <-time.After(time.Second):
++		t.Fatal("late attach was not cancelled")
++	}
++	if s := r.Query("a"); s.State != Closing {
++		t.Fatalf("completed before session exit: %s", s.State)
++	}
++	op.DoneCreation()
++	if s := r.Query("a"); s.State != Closing {
++		t.Fatalf("completed before session exit: %s", s.State)
++	}
++	op.DoneSession()
++	wg.Wait()
++	if s := r.Query("a"); s.State != Completed {
++		t.Fatalf("session not completed: %s", s.State)
++	}
++}
++
++func TestBarrierRequiresExplicitReleaseAfterClose(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 2)
++	r.EnableBarriers()
++	if err := r.ArmBarrier(BeforeAddPublisher, "a"); err != nil {
++		t.Fatal(err)
++	}
++	op, err := r.Begin("a", "path", "digest")
++	if err != nil {
++		t.Fatal(err)
++	}
++	op.AttachSession(func() {})
++	arrived := make(chan error, 1)
++	go func() { arrived <- r.WaitBarrier(BeforeAddPublisher, "a") }()
++	deadline := time.Now().Add(time.Second)
++	for !r.BarrierStatus(BeforeAddPublisher, "a").Arrived && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	if !r.BarrierStatus(BeforeAddPublisher, "a").Arrived {
++		t.Fatal("barrier never arrived")
++	}
++	if got := r.CloseOperation("a"); got.State != Closing {
++		t.Fatalf("close state %s", got.State)
++	}
++	select {
++	case <-arrived:
++		t.Fatal("cancel released held work")
++	default:
++	}
++	if got := r.Query("a"); got.State != Closing {
++		t.Fatalf("premature completion %s", got.State)
++	}
++	if err := r.ReleaseBarrier(BeforeAddPublisher, "a"); err != nil {
++		t.Fatal(err)
++	}
++	if err := <-arrived; err != nil {
++		t.Fatal(err)
++	}
++	op.DoneSession()
++	op.DoneCreation()
++	if got := r.Query("a"); got.State != Completed {
++		t.Fatalf("completion %s", got.State)
++	}
++}
++
++func TestBarrierAbortRejectsNewAndReleasesHeld(t *testing.T) {
++	r := newMemoryRegistry("slot-a", "epoch-a", 2)
++	r.EnableBarriers()
++	if err := r.ArmBarrier(DuringAuth, "a"); err != nil {
++		t.Fatal(err)
++	}
++	done := make(chan error, 1)
++	go func() { done <- r.WaitBarrier(DuringAuth, "a") }()
++	deadline := time.Now().Add(time.Second)
++	for !r.BarrierStatus(DuringAuth, "a").Arrived && time.Now().Before(deadline) {
++		time.Sleep(time.Millisecond)
++	}
++	if !r.BarrierStatus(DuringAuth, "a").Arrived {
++		t.Fatal("barrier not entered")
++	}
++	r.AbortBarriers()
++	r.AbortBarriers()
++	select {
++	case err := <-done:
++		if err == nil {
++			t.Fatal("aborted barrier succeeded")
++		}
++	case <-time.After(time.Second):
++		t.Fatal("held work not released")
++	}
++	if err := r.WaitBarrier(DuringAuth, "a"); err == nil {
++		t.Fatal("new waiter accepted after abort")
++	}
++	if err := r.ArmBarrier(DuringAuth, "b"); err == nil {
++		t.Fatal("new arm accepted after abort")
++	}
++}
++
++func TestEpochProcessHelper(t *testing.T) {
++	if os.Getenv("WBB_EPOCH_HELPER") != "1" {
++		t.Skip("subprocess only")
++	}
++	r, err := Open(os.Getenv("WBB_ANCHOR"), os.Getenv("WBB_HISTORY_DIR"), 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(os.Getenv("WBB_MARKER"), []byte(r.Epoch()), 0600); err != nil {
++		t.Fatal(err)
++	}
++	time.Sleep(time.Hour)
++}
++
++func TestKilledProcessEpochAtoBtoC(t *testing.T) {
++	dir := t.TempDir()
++	anchor := filepath.Join(t.TempDir(), "anchor")
++	if err := os.WriteFile(anchor, []byte(`{"slot":"s","root":"r"}`), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := Bootstrap(anchor, dir); err != nil {
++		t.Fatal(err)
++	}
++	start := func(name string) string {
++		marker := filepath.Join(t.TempDir(), name)
++		cmd := exec.Command(os.Args[0], "-test.run=^TestEpochProcessHelper$")
++		cmd.Env = append(os.Environ(), "WBB_EPOCH_HELPER=1", "WBB_ANCHOR="+anchor, "WBB_HISTORY_DIR="+dir, "WBB_MARKER="+marker)
++		if err := cmd.Start(); err != nil {
++			t.Fatal(err)
++		}
++		deadline := time.Now().Add(3 * time.Second)
++		var b []byte
++		for time.Now().Before(deadline) {
++			b, _ = os.ReadFile(marker)
++			if len(b) > 0 {
++				break
++			}
++			time.Sleep(10 * time.Millisecond)
++		}
++		if len(b) == 0 {
++			cmd.Process.Kill()
++			cmd.Wait()
++			t.Fatal("child did not accept epoch")
++		}
++		if _, err := Open(anchor, dir, 2); err == nil {
++			cmd.Process.Kill()
++			cmd.Wait()
++			t.Fatal("concurrent lock accepted")
++		}
++		if err := cmd.Process.Kill(); err != nil {
++			t.Fatal(err)
++		}
++		if err := cmd.Wait(); err == nil {
++			t.Fatal("expected killed child")
++		}
++		return string(b)
++	}
++	a := start("a")
++	b := start("b")
++	c, err := Open(anchor, dir, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if a == b || b == c.Epoch() || a == c.Epoch() || c.Lifecycle().EpochSequence != 3 {
++		t.Fatal("epoch was reused or sequence skipped")
++	}
++	if got := c.QueryEpoch(a, "old"); got.State != Completed || got.EpochSequence != 1 {
++		t.Fatalf("A not retired: %+v", got)
++	}
++	if got := c.QueryEpoch("not-in-history", "old"); got.State != UnknownEpoch {
++		t.Fatalf("unknown epoch accepted: %s", got.State)
++	}
++}

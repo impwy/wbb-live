@@ -1,0 +1,39 @@
+name: wbb-media-completion-spike
+services:
+  auth:
+    image: wbb-media-completion-spike:local
+    entrypoint: ["/wbb-auth-fixture"]
+    environment:
+      WBB_FIXTURE_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?set-in-local-env}
+      WBB_FIXTURE_ADDRESS: :8081
+    ports:
+      - "127.0.0.1:29699:8081"
+    networks: [spike]
+  mediamtx:
+    image: wbb-media-completion-spike:local
+    depends_on: [auth]
+    environment:
+      WBB_COMPLETION_ANCHOR: /spike/anchor.json
+      WBB_COMPLETION_DIR: /spike/state
+      WBB_COMPLETION_ADDRESS: 0.0.0.0:9998
+      WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?set-in-local-env}
+      WBB_COMPLETION_BARRIERS: "1"
+    volumes:
+      - ./anchor.json:/spike/anchor.json:ro
+      - completion_state:/spike/state
+      - ./mediamtx.yml:/spike/mediamtx.yml:ro
+    command: ["/spike/mediamtx.yml"]
+    ports:
+      - "127.0.0.1:29697:9997"
+      - "127.0.0.1:29889:8889"
+      - "127.0.0.1:29888:8888"
+      - "127.0.0.1:29698:9998"
+      - "127.0.0.1:29554:8554"
+      - "127.0.0.1:29791:29791/udp"
+    networks: [spike]
+volumes:
+  completion_state:
+    external: true
+    name: wbb-media-completion-spike_completion_state
+networks:
+  spike:

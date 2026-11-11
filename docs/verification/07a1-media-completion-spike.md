@@ -1,6 +1,6 @@
 # 07-A1 미디어 종료 계약 독립 검증 계획
 
-상태: 구현 중. 아래 표는 실행 계획이며 통과 결과가 아니다. 지정 구현자가 변경과 자원을 동결한 뒤 조정자가 독립 실행한다. 현재 기초 registry 검사와 일부 패키지 컴파일 확인을 실제 미디어 검증으로 대신하지 않는다.
+상태: 07-A1 격리 계약의 독립 검증 완료. 아래 표는 계획한 검사 경계를 설명하며 실제 실행 근거는 뒤의 패치 해시별 기록을 따른다. 제품 DB·worker 통합과 실제 기기 인수는 미완료다.
 
 ## 검증 준비
 
@@ -70,3 +70,15 @@
 동일 패치·이미지에서 조정자가 `node verify-media.mjs before_add_publisher`를 독립 실행해 종료 코드0을 확인했다. AddPublisher 직전 장벽의 A는 해제 후 completed·미디어 부재, B는 active·FFmpeg 신원과 lifecycle tuple 유지였다. B의 9개 관측점에서 영상 증가 8구간, ingress 증가 8구간, 204프레임/6.843초 증가, 전체 cleanup 통과를 `/tmp/wbb-root-07a1-final-before-add.log`에 기록했다.
 
 동일 패치·이미지에서 `node verify-media.mjs cancel_post`도 독립 실행해 종료 코드0을 확인했다. 완료 응답 전 장벽에서 A의 POST 응답을 유실한 뒤 A completed·미디어 부재, B active·FFmpeg 신원과 lifecycle tuple 유지였다. B의 9개 관측점에서 영상 증가 8구간, ingress 증가 8구간, 205프레임/6.862초 증가, 전체 cleanup 통과를 `/tmp/wbb-root-07a1-final-cancel-post.log`에 기록했다. 두 검사는 현재 패치의 특정 경합 증거이며, 정적 리뷰에서 발견한 설정 우회·검증기 cleanup·이력 무결성 결함이 수정되기 전에는 07-A1 전체 통과로 분류하지 않는다.
+
+## 수정 동결 후보의 독립 재검사
+
+2026-11-11 조정자는 수정 후보 패치 SHA-256 `99ea61f27051f593713c3832825c009bdda2f3ecb26f41ffc71565ed6b62156d`와 Linux/arm64 이미지 `sha256:e5008e28ed6bdf485676d647be14c5602e8070f77b027d644c3eee07e39cbeef`를 고정해 확인했다. 다른 깨끗한 upstream checkout에 패치를 적용하고 `go generate ./internal/core ./internal/servers/hls ./internal/staticsources/rpicamera` 및 `go test -race -count=1 ./internal/wbbcompletion ./internal/protocols/httpp ./internal/servers/webrtc ./internal/core`를 실행해 네 패키지가 통과했다. `go build ./internal/api ./cmd/wbb-bootstrap`도 통과했다. 이 실행은 macOS 호스트였다. 추가로 포함해 실행한 `internal/api`의 upstream 테스트는 Linux 전용 `unix.InotifyInit1` 등의 심볼을 macOS에서 컴파일하지 못해 실패했다. 이를 제품 결함이나 Linux 통과로 기록하지 않는다.
+
+최종 후보 이미지의 별도 일회용 볼륨·네트워크·loopback 포트에서 조정자가 `node verify-active-capacity.mjs`를 실행했다(종료 코드0). 실제 H264/Opus A·B 송출과 FFmpeg·HLS 시청이 active인 용량2 상태에서 제3 작업 close는 503/`capacity_unknown`이었다. A의 RTP callback 장벽에서 close/query는 `closing`, release 후 `completed`; B는 9개 관측점의 영상 증가8구간·ingress 증가8구간·242프레임/8.085초 증가와 FFmpeg PID/시작 시각·epoch 유지였다. A 미디어 부재, 두 방송과 전용 볼륨·네트워크 cleanup 통과를 직접 관측했다.
+
+같은 이미지에서 `node verify-capacity-epoch.mjs`도 별도 볼륨으로 독립 실행했다(종료 코드0). debug/packet dump/hook 및 유효한 path/defaults의 `AlwaysAvailable`·`Forward` 총8가지 설정 기동 거절, 빈 볼륨·동시 잠금 거절, tombstone 포화의 503/`capacity_unknown`과 기존 완료 표식 보존, A→B→C epoch 1·2·3 연속성 및 옛/모르는 epoch 구분, 유효 JSON의 epoch ID 한 글자 변조에 대한 checksum 거절, cleanup을 확인했다. 검사 후 일회용 컨테이너는 없었고 기존 전용 MediaMTX/auth 2개는 그대로 활성0, helper8090은 HTTP200이었다.
+
+두 축 정적 리뷰는 앞서 발견한 설정 우회·이력 손상·실제 활성 용량 증거 부족을 수정 확인했다. 추가로 `verify-boundary.mjs`의 fixture `allow` 응답 유실 시 정리 대상 등록이 누락되는 검증기 결함을 확인했다. 지정 구현자는 허용 요청 직전에 ID와 경로를 등록하고 응답 유실·revoke 실패 회귀를 추가했다. 조정자는 `node --test boundary-cleanup.test.mjs` 7/7과 `node verify-boundary.mjs`의 설정 API 읽기 전용5/5, 혼합 자격2/2, tuple 거절6/6, 4xx·중복·세 장벽·소유 자원 정리를 독립 실행해 모두 통과했다. 이 마지막 실제 HTTP 검사는 기존 전용 이미지에서 수행했으며 새 `99ea61` 이미지의 실제 미디어·용량/이력 검사는 위의 분리 스택 실행에 근거한다.
+
+최종 실험 패치의 미검증 범위는 파일 watcher 변경 시 무반영의 별도 런타임 관측, 악의적 이력 재작성·롤백/복제 볼륨, 장기 용량/부하 및 제품 DB·worker 통합이다. 앞의 watcher는 completion 모드에서 생성하지 않고 설정 API 변경 5/5를 거절하는 코드·HTTP 경계로 제한해 판정한다. 이 단계는 제품의 정확한 ENDED 판정이나 실제 기기 인수를 뜻하지 않는다.

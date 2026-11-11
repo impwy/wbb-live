@@ -1,0 +1,5 @@
+.env
+anchor.json
+*.log
+*.jsonl
+artifacts/

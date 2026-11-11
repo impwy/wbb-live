@@ -1,7 +1,7 @@
 # 07-A1: 미디어 작업 종료 완료 계약 스파이크
 
-**Status:** in-progress
-**Blocked by:** 07-C 구현 동결 및 검증 인계. 제품 구현자는 지정 세션 한 명이며 동시에 진행하지 않는다.
+**Status:** done
+**Blocked by:** 07-C 구현 동결 및 검증 인계(충족). 제품 구현자는 지정 세션 한 명이며 동시에 진행하지 않는다.
 **목표:** ADR0001의 종료 증거 계약을 실제 고정 MediaMTX에서 구현·반증한 뒤 제품 통합 가능 여부를 판정한다.
 
 ## 범위와 순서
@@ -34,3 +34,9 @@ lifecycle 조회, operation close/query, 기존 전용WHIP의tuple+정확경로+
 query의실행중상태와never-registered를completed와구별한다. duplicatePOST는새세션을만들지않으며다른경로/본문충돌도거절한다. close가참조하는작업실행수에그close조회handler자신을넣어영원히완료되지않는구조를피한다. 생성handler와그가위임한세션/하위작업만종료대상소유권으로추적한다.
 
 기존media서비스의권한/상태계약은이실험중유지한다. 실제upstream소유권연결과최소회귀를먼저보고하고,전체장애장벽/두방송/epoch회귀완료후독립검증에인계한다.
+
+## 결과와 후속 경계
+
+고정 원본 `9540cb6c1d9f1e9351fcc4ded3afc249ffff22bc` 대비 실험 패치 SHA-256 `99ea61f27051f593713c3832825c009bdda2f3ecb26f41ffc71565ed6b62156d`를 보존했다. 구현자 Linux 장벽·두 방송·재시작·설정·용량 검사와 조정자 독립 clean patch 적용/race·실제 A/B capacity=2·A→B→C 및 손상·설정 기동 거절 검사를 기록했다. 두 축 리뷰에서 검증기 정리 소유권 결함까지 수정했고 조정자가 Node 7/7과 HTTP boundary를 재확인했다. 상세 실행 조건, 패치별 이미지·성공/실패 범위는 `docs/verification/07a1-media-completion-spike.md`, 리뷰는 `docs/reviews/07a1-media-completion-spike.md`를 따른다.
+
+이 완료는 **격리된 MediaMTX 종료 계약**에 한정한다. 제품 API·DB·worker는 여전히 구형 종료 판단을 사용하므로 07-A2 전에는 필수 BCAST-03을 완료로 표시하지 않는다. checksum은 우발적 손상 검출이며 볼륨 복제·롤백 보증이 아니다. 별도 파일 watcher 변경 런타임 관측과 장기 용량/부하·실제 기기/외부망 인수도 남는다.

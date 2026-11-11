@@ -4,6 +4,10 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 2026-11-11 07-A2 제품 통합 인계
+
+07-A1 격리 패치·문서 `311abb6`을 [Draft PR10](https://github.com/impwy/wbb-live/pull/10)(base `work/outbox-delivery`)에 게시했다. 새 브랜치는 `work/media-completion-integration`, 시작 기준 `311abb6`이다. 지정 대체 Codex `%12`가 07-A1 파일·Docker 조작 중단을 명시한 뒤 조정자가 독립 검증·게시를 끝냈다. 같은 단독 구현자에게 `.scratch/wbb-live/issues/07a2-media-completion-integration.md`의 제품 API·DB·worker 종료 근거 통합을 지시했다. 먼저 tuple/evidence/HMAC/잠금/종료 게이트 설계를 보고하고 그 범위 내 구현을 이어간다. 기존 07-A1 전용 옛 이미지·볼륨과 helper8090을 보존하고 제품 통합 검증은 별도 전용 자원으로 격리한다. 현 시점 07-A2 제품 변경·검증 결과는 아직 없다.
+
 ### 최신: 2026-11-11 07-A1 동결·독립 검증
 
 지정 pi `%10`은 마지막 실제 확인에서 429/1310이므로 구현 담당은 지정 대체 Codex `%12`다. 대체 구현자는 07-A1 패치 `99ea61f27051f593713c3832825c009bdda2f3ecb26f41ffc71565ed6b62156d`와 검증기 수정·자체 Linux 결과를 보고한 뒤 **실험·제품 파일 편집 및 Docker 조작 중단**을 명시했다. 조정자가 전용 자원을 인수해 clean patch/race, 새 이미지의 실제 두 방송 capacity=2, epoch/설정/손상, boundary 검증기 Node 7/7과 HTTP 경계를 독립 실행했다. 두 축 리뷰의 잔여 확정 결함은0건이며 ADR0001은 격리 계약으로 채택, 07-A1은 done으로 기록했다. 이는 제품 종료 정확성 완료가 아니다. 최신 제품은07-C `90921dc`/Draft PR9이고 다음 구현은07-A2로, 07-A1 문서·게시와 분기 인계 후 **같은 대체 세션 한 명**에게 시작시킨다. 07-A1 옛 전용 MediaMTX/auth는 활성0으로 보존, helper8090 HTTP200, 일회용 검사 자원은 정리됐다. 새 checksum 형식은 기존 실험 볼륨을 자동 승격하지 않으므로 제품 전환 시 새 전용 볼륨의 명시 bootstrap과 과거 작업 정책이 필요하다.

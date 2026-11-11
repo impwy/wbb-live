@@ -1,6 +1,6 @@
 # 07-A2: 종료 완료 계약의 제품 통합
 
-**Status:** ready-for-agent
+**Status:** in-progress
 **Blocked by:** 07-A1 실제 Linux 미디어·장애 매트릭스, 독립 검증 및 ADR0001 채택(2026-11-11 충족). 구현자는 별도 동결·인계 후 단독으로 시작한다.
 **목표:** known/unknown 생성 작업 모두 정확한 완료 근거를 저장한 뒤에만 closed 및 방송 ENDED를 확정한다.
 
@@ -43,3 +43,7 @@
 - 기존 인증·인가·CRUD·영속성·PC 화면과 두 음원·카메라·익명 시청 회귀를 실행한다. 실제 휴대폰/외부망/Google/VAAPI/ABR 관문은 별도로 남긴다.
 
 07-A2 완료 전 부모07-A 및 07-B의 선행조건을 충족했다고 표시하지 않는다. 새 제품 구현자나 병렬 편집을 시작하지 않는다.
+
+## 구현 착수 설계 검토
+
+2026-11-11 지정 단독 구현자는 새 migration의 고정 operation 귀속과 별도 완료 증거, 공용 미디어 client의 HMAC·lifecycle·응답 tuple 검증, API의 commit 전송 순서, Stop과 dispatch의 session 직렬화, worker의 정확한 close/query→FFmpeg 종료→최신 snapshot→ENDED 재검사를 보고했다. 조정자는 family→broadcast→session 잠금 순서, never-sent와 dispatch 경쟁, 구형 closed 비재분류, unknown/4xx/timeout fail-closed를 조건으로 범위 내 계속 구현하도록 전달했다. 이 설계 보고는 제품 동작이나 테스트 통과 결과가 아니다.

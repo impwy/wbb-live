@@ -4,6 +4,12 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 2026-11-11 실험 검증 재개
+
+지정 pi의 상태 확인 실제 응답은429/1310(Weekly/Monthly Limit Exhausted, reset 2026-11-14 20:53:52 시간대 미표기)이었다. 지정 대체 Codex는 응답 가능, 편집·실행 중단 및 체크포인트 인계를 명시했다. 동일 세션·동일 모델을 유지해07-A1 실험영역 구현 재개를 지시했다. 조정자는 실제 작업 시작과 이후 한도 응답을 계속 확인한다.
+
+보존된patch ac005b02와HTTP독립검사 통과는 유효하다. 새verify-media.mjs는 아직 실행 전이며 B음성/영상연속성·epoch·A변환종료·cleanup검증 보완을 요청했다. 모든 기존WBB Docker스택은 재확인시22시간전 종료 상태였고helper8090은HTTP200이다. 기존제품스택을 일괄기동하지 않고 필요한07A1전용실험만 사용한다. 07-A2 초안은07A1전체검증·ADR채택 전 구현하지 않는다.
+
 ### 최신: 07-A1 미디어 종료 계약 구현 인계
 
 07-C 제품90921dc를 Draft PR9(base work/mobile-camera)에게시했다. 조정자전체Go race·vet·DB재시작/TERM·Kafka중단제품미디어검사통과,제품해시동일,전용활성0/8090정상이다. PR9의backend/frontend CI모두통과를확인했다. 새work/media-completion-spike에서지정대체Codex에게07-A1 endpoint/schema·작업소유권·잠금수명·검증장벽의구체설계를먼저요청한다. endpoint/HMAC/작업소유권과불변bootstrap anchor검토를마쳤고같은세션에실험영역단독구현을지시했다. 기존스택교체나07-A전체완료가아니다.

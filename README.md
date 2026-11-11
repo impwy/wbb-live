@@ -2,9 +2,9 @@
 
 치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
 
-- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). VAAPI 후속은 독립 브라우저13/13·해상도3종·종료 검증 통과. Google 로그인은 구현·자동 검증을 통과했으며 실제 Google 인증은 미검증. 04-A 로컬 회차 준비·취소와 영속 상태는 독립 검증·CI를 통과했습니다. 04-B1 인증 미디어 서버는 로컬 송출·익명 시청·종료·재시작을 검증했습니다. 04-B2 Flutter PC 송출·익명 시청은 로컬 독립 검증을 통과했습니다. 05-A 카메라·마이크 제품 통합도 로컬 독립 검증을 통과했습니다. 실제 모바일 기기 인수와 unknown POST 자동 회수는 미완료입니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
+- **상태**: 이메일 인증·방송 CRUD, PC 화면과 두 음원, 카메라·마이크, 익명 시청을 로컬 제품 흐름에서 구현·검증했습니다. 07-A2에서는 실제 PostgreSQL과 패치 MediaMTX를 연결해 저장된 완료 근거 뒤 방송을 종료하고 FFmpeg·ingress를 정리하는 흐름을 확인했습니다. 전체 제품 장애 매트릭스와 실제 iPhone·외부망·Google 자격·평가 로그인 인수는 남았습니다. [필수 요구사항 현황](docs/verification/required-implementation-status.md)을 참고하세요.
 - **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
-- **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
+- **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다. 공개 평가 로그인 준비는 09-A 범위다.
 - 설계 계약: `docs/design.md` (Codex 관리)
 - 요구사항: `requirements/` (원본 보존)
 - 용어: `GLOSSARY.md`
@@ -17,6 +17,7 @@
 | `wbb-frontend/` | Flutter Web 앱 (방송 목록/상세, 가입·로그인, 내 방송 CRUD) |
 | `experiments/media-single-rendition/` | 로컬 미디어 실험. [실행 조건과 알려진 실패](experiments/media-single-rendition/README.md) |
 | `experiments/media-vaapi/` | GPU 후속 실험. [실행·미완료 사항](experiments/media-vaapi/README.md), [독립 검증](docs/verification/02-media-vaapi.md) |
+| `experiments/media-completion-integration/` | 완료 근거를 제품 API·worker·Flutter에 연결한 전용 로컬 검증 스택. [실행 안내](experiments/media-completion-integration/README.md) |
 | `deploy/` | 배포 구성 (Caddy/k3s, 추후 확장) |
 | `docs/`, `.scratch/` | 설계 문서와 티켓 (Codex 관리) |
 
@@ -24,7 +25,7 @@
 
 ## 사전 요구
 
-- Go 1.27.3+
+- Go 1.27.4+
 - Flutter 3.47.x (stable)
 - Docker & Docker Compose (PostgreSQL/Redis 실행용)
 

@@ -1,6 +1,6 @@
 # 07-A2 종료 완료 제품 통합 리뷰
 
-상태: 구현 중. 아래는 변경 전 코드와 07-A1 계약에서 도출한 검토 기준이다. 새 제품 구현의 통과 결과가 아니다.
+상태: 제품 통합의 두 축 리뷰와 결함 수정 진행 중. 아래 처음 네 항목은 변경 전 코드에서 도출한 검토 기준이며, 뒤의 실행 결과와 구분한다.
 
 ## Spec
 
@@ -19,4 +19,20 @@ A1 서명은 각 UTF-8 part의 바이트 길이와 `:`를 이어 HMAC-SHA256 hex
 
 ## 구현 중 확인한 회복 경합
 
-초기 worker 변경은 5초 부재로 operation을 closed 처리하는 경로와 함께, 이전 worker run의 `state='exited'` 영속 갱신도 제거했다. 새 `completionReady`는 모든 run이 exited여야 ENDED를 허용하므로 worker 재시작 후 inherited 이전 run이 실제로 정리돼도 상태가 running/starting에 남아 STOPPING이 지속될 수 있다. lock·lease·프로세스 신원·최신 자원 근거를 확인한 뒤 정확한 run ID/fence/generation으로 exited를 기록하는 회복 경로와 실제 재시작 검사를 지정 구현자에게 요청했다. 수정·재검증 전의 지적이다.
+초기 worker 변경은 5초 부재로 operation을 closed 처리하는 경로와 함께, 이전 worker run의 `state='exited'` 영속 갱신도 제거했다. 새 `completionReady`는 모든 run이 exited여야 ENDED를 허용하므로 worker 재시작 후 inherited 이전 run이 실제로 정리돼도 상태가 running/starting에 남아 STOPPING이 지속될 수 있었다. 지정 구현자가 정확한 run ID/fence/generation의 종료 기록을 복구했고 worker 강제 교체 검사에서 검증했다.
+
+## 구현 중 확인한 기동 순환
+
+API의 `/health/ready`에 MediaMTX completion lifecycle 확인을 추가한 시점에 전용 Compose의 `mediamtx`가 `api: service_healthy`를 기다리면 깨끗한 기동은 API→MediaMTX→API 대기가 됐다. `api: service_started`로 낮추고 새 이미지의 clean down/up에서 lifecycle 및 최종 API readiness 200을 확인했다.
+
+## 구현 중 확인한 DB 장애 회복 결함
+
+전용 PostgreSQL을 중지한 상태에서 `stopAll`은 실제 FFmpeg를 정리한 뒤 `w.runs`에서 그 run을 삭제하고 `lostLease`만 남겼다. DB 복구 후 worker가 회차를 STOPPING으로 바꾸었지만, `confirmRecoveredRunExit`는 **같은 incarnation**의 run을 건너뛰므로 `media_worker_runs.state=running`이 영속됐다. 수정 후에는 로컬에서 검증한 실행 신원을 영속 기록 성공까지 보존하며 실제 PostgreSQL 중단·복구 검사를 통과했다(`/tmp/wbb-07a2-impl-db-restart-final.log`).
+
+## 제품 변경 두 축 리뷰
+
+기준 `b5b0ff7^..b5b0ff7`를 독립 두 축으로 검토했다. **Standards:** 확정된 위반 0건. 가족→방송→회차 잠금 코드와 세 검증 스크립트의 TLS pin 코드 반복은 낮은 우선순위의 유지보수 지적 2건으로 남았다. **Spec:** 자연 FFmpeg 종료 시 영속 `exited` 기록 전 in-memory run을 버려 STOPPING이 고착되는 결함, lifecycle 일반 `sequence` 타입을 presence만 확인하는 결함, 설정에서 허용한 completion URL 뒤 `/`가 client에서 거절되는 결함 3건을 확인했다. 문서에는 구형 작업 운영 절차 누락과 DELETE 상태코드 불일치 2건이 있었다.
+
+지정 구현자는 자연 종료에서 정확한 실행 신원의 `exited` 기록을 먼저 수행하고, 이후 세션 전이가 실패해 재시도할 때 같은 신원에 한해서만 idempotent로 받아들이도록 수정했다. 조정자 독립 브라우저가 자연 종료·전이 한 차례 실패의 복구와 완료 근거, 실제 자원 부재를 확인했다. 일반 `sequence`는 `uint64`로 decode하며 잘못된 타입·음수·분수·overflow를 거절하도록 테스트했고 API readiness의 malformed 응답 검사도 추가했다. 공용 client는 빈 경로와 단일 `/`를 허용하며 구현자가 API/worker 동시 기동과 브라우저 검사를 통과했다. 구형 작업은 `docs/operations/legacy-media-operations.md`에 안전한 보류·분리 절차를 기록했고 `docs/design.md`의 DELETE 상태코드를 제품과 맞췄다.
+
+제품 전체 barrier 및 A→B→C 재시작 매트릭스는 독립 통합 실행이 남았다. 구형 미완료 작업의 자동 복구 도구는 없다. 실제 기기·외부망 인수도 별도다. 이 범위를 검증 완료로 표시하지 않는다.

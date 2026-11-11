@@ -88,7 +88,7 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 | POST /broadcasts/{id}/sessions/{sid}/publish-grants | 소유자, STARTING에서만 | 201 단기 grant |
 | POST /live-sessions/{sid}/whip | publish grant | WHIP 규격 응답, 외부 안전 Location |
 | PATCH /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권·활성 회차 | WHIP 규격 ICE 처리 |
-| DELETE /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권 | 204 연결 삭제, 종료 요청 |
+| DELETE /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권 | 202 종료 요청 수락; 실제 완료는 회차 ENDED로 확인 |
 | GET /broadcasts/{id}/playback | 공개 | LIVE면200 {sessionId,masterUrl}; 미송출409 |
 | POST /playback-events | 공개, 크기/빈도/필드 제한 | 202 집계용 이벤트 수락 |
 
@@ -125,7 +125,7 @@ Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저�
 
 API/worker 시작 시 및 주기5초마다 활성 회차와 실제 미디어 상태를 대조한다. worker lease는 단일 소유권을 보장하되 시간이 지난 lease를 인계할 수 있어야 한다. 콜백은 private network 인증을 거치고 `session_id, media_generation, connection_id`와 현재 상태를 검사한다. 중복·역순 이벤트는 무해해야 한다. DB 재시작 후 연결이 남은 경우에도 검증 없이 ENDED→LIVE로 바꾸지 않는다.
 
-WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 작업을 DB에 예약한다. 회차별 미해결 생성 작업은 하나만 허용하고 동일 grant의 동시 POST는409로 거절한다. STOPPING 이후 도착한 생성 성공은 클라이언트에 공개하지 않고 해당 연결만 정리한다. 응답 유실·프로세스 재시작으로 결과가 불명확하면 회차 전용 미디어 경로와 제어 API로 확인한다. 생성 결과와 정리가 해결되기 전에는 새 생성 및 ENDED 확정을 금지한다. 이 최소 재조정은04에 포함하며07의 Kafka 작업까지 미루지 않는다.
+WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 작업을 DB에 예약한다. 회차별 미해결 생성 작업은 하나만 허용하고 동일 grant의 동시 POST는409로 거절한다. 송출할 SDP digest와 검증된 MediaMTX contract/root/slot/epoch/sequence를 작업에 고정한 뒤 첫 upstream byte를 보낸다. STOPPING 이후 도착한 생성 성공은 클라이언트에 공개하지 않는다. 응답 유실·프로세스 재시작으로 Location을 몰라도 저장된 operation ID와 epoch로 close/query를 재시도한다. upstream 4xx·DELETE 200/204/404·자원 부재는 완료 증거가 아니다. 해당 작업의 검증된 `completed` 또는 직렬화된 never-sent 증거, FFmpeg 실행 종료 및 새 자원 snapshot을 확인한 뒤에만 ENDED를 확정한다. 계약이 없는 구형 미완료 작업은 새 epoch를 소급 대입하지 않고 STOPPING에 남긴다. 운영 처리 기준은 [구형 미디어 작업 절차](operations/legacy-media-operations.md)를 따른다.
 
 ## 7. WHIP 인증과 브라우저 캡처
 

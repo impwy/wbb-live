@@ -4,6 +4,12 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 2026-11-11 07-A2 로컬 검증·구현 동결
+
+지정 pi `%10`의 마지막 실제 응답은 429/1310이었고 구현 담당은 사용자가 지정한 대체 Codex `%12`다. 대체 구현자는 07-A2 제품 통합과 두 축 리뷰의 자연 종료·설정 검증 결함 수정을 마치고 **제품·검증기 편집과 Docker 조작 중단**을 명시했다. 조정자가 제품 `b5b0ff7`, 수정 `0096bd2`를 커밋하고, 전용 공개 HTTPS의 두 Chrome H264/두 음원/익명 HLS/완료 근거 뒤 ENDED와 자연 FFmpeg 종료의 전이 실패·종료 기록 실패 재시도를 독립 검증했다. 수정본 전체 Go race와 Flutter analyze·59개 테스트가 통과했다. 전용 스택은 활성 회차0·unresolved 작업0이며 helper8090도 정상이다. 이 기록은 실제 iPhone·외부망·평가 로그인의 인수가 아니다.
+
+07-A2의 제품 barrier 및 MediaMTX A→B→C 매트릭스와 구형 미완료 작업의 검증된 운영 복구 경로가 남는다. 리뷰·검증 문서 갱신 및 Draft PR 게시 후 지정 대체 구현자에게 다음 범위를 단독으로 인계한다. 동결 중 새 제품 편집이나 병렬 구현을 시작하지 않는다.
+
 ### 최신: 2026-11-11 07-A2 제품 통합 인계
 
 07-A1 격리 패치·문서 `311abb6`을 [Draft PR10](https://github.com/impwy/wbb-live/pull/10)(base `work/outbox-delivery`)에 게시했다. 새 브랜치는 `work/media-completion-integration`, 시작 기준 `311abb6`이다. 지정 대체 Codex `%12`가 07-A1 파일·Docker 조작 중단을 명시한 뒤 조정자가 독립 검증·게시를 끝냈다. 같은 단독 구현자에게 `.scratch/wbb-live/issues/07a2-media-completion-integration.md`의 제품 API·DB·worker 종료 근거 통합을 지시했다. 먼저 tuple/evidence/HMAC/잠금/종료 게이트 설계를 보고하고 그 범위 내 구현을 이어간다. 기존 07-A1 전용 옛 이미지·볼륨과 helper8090을 보존하고 제품 통합 검증은 별도 전용 자원으로 격리한다. 현 시점 07-A2 제품 변경·검증 결과는 아직 없다.

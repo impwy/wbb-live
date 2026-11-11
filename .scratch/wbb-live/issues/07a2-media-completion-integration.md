@@ -1,6 +1,6 @@
 # 07-A2: 종료 완료 계약의 제품 통합
 
-**Status:** in-progress
+**Status:** in-review (로컬 제품 흐름 및 자연 종료·재시도 검증 완료; 전체 제품 장애 매트릭스와 공개 인수는 별도)
 **Blocked by:** 07-A1 실제 Linux 미디어·장애 매트릭스, 독립 검증 및 ADR0001 채택(2026-11-11 충족). 구현자는 별도 동결·인계 후 단독으로 시작한다.
 **목표:** known/unknown 생성 작업 모두 정확한 완료 근거를 저장한 뒤에만 closed 및 방송 ENDED를 확정한다.
 
@@ -43,6 +43,12 @@
 - 기존 인증·인가·CRUD·영속성·PC 화면과 두 음원·카메라·익명 시청 회귀를 실행한다. 실제 휴대폰/외부망/Google/VAAPI/ABR 관문은 별도로 남긴다.
 
 07-A2 완료 전 부모07-A 및 07-B의 선행조건을 충족했다고 표시하지 않는다. 새 제품 구현자나 병렬 편집을 시작하지 않는다.
+
+## 2026-11-11 제품 체크포인트
+
+지정 단독 구현자가 제품 API·DB migration·worker와 공용 완료 client를 연결하고 전용 HTTPS/Flutter/MediaMTX 검증 스택을 작성했다. 조정자는 실제 PostgreSQL·두 Chrome의 WHIP/HLS·두 음원·종료 근거·FFmpeg/ingress 부재를 독립 확인했다. 두 축 리뷰에서 발견한 자연 FFmpeg 종료와 DB 전이 실패 경합, lifecycle 일반 `sequence` 타입, URL 뒤 `/` 설정 불일치를 수정했다. 자연 종료의 기록 실패 및 전이 실패 재시도는 각각 별도 실제 브라우저 검사로 통과했다. 실행 세부는 `docs/verification/07a2-media-completion-integration.md`, 리뷰는 `docs/reviews/07a2-media-completion-integration.md`를 따른다.
+
+남은 관문은 제품 설정의 등록·인증·AddPublisher·RTP barrier와 MediaMTX A→B→C 교체 전체 매트릭스, 구형 미완료 작업의 운영 복구 경로다. 실제 iPhone·외부망·평가 로그인은 09-A에서 인수한다. 구현자 편집은 독립 검증 동안 중단됐다.
 
 ## 구현 착수 설계 검토
 

@@ -30,6 +30,15 @@ class LoginResult {
   final User user;
 }
 
+class AuthProviders {
+  const AuthProviders({
+    required this.googleEnabled,
+    required this.evaluationEnabled,
+  });
+  final bool googleEnabled;
+  final bool evaluationEnabled;
+}
+
 /// A start response for the publisher only. Never place this in public
 /// [LiveSession] state or render the grant in a widget.
 class PreparedSession {
@@ -193,10 +202,15 @@ class ApiClient {
 
   // -- auth ----------------------------------------------------------------
 
-  Future<bool> googleEnabled() async {
+  Future<AuthProviders> authProviders() async {
     final data = await _request('GET', '/auth/providers');
-    return data['googleEnabled'] == true;
+    return AuthProviders(
+      googleEnabled: data['googleEnabled'] == true,
+      evaluationEnabled: data['evaluationEnabled'] == true,
+    );
   }
+
+  Future<bool> googleEnabled() async => (await authProviders()).googleEnabled;
 
   Future<User> register({
     required String email,
@@ -211,7 +225,13 @@ class ApiClient {
     return User.fromJson(data['user'] as Map<String, dynamic>);
   }
 
-  Future<LoginResult> login(String email, String password) async {
+  Future<LoginResult> login(String email, String password) =>
+      _beginLogin('/auth/login', body: {'email': email, 'password': password});
+
+  Future<LoginResult> evaluationLogin() =>
+      _beginLogin('/auth/evaluation-login');
+
+  Future<LoginResult> _beginLogin(String path, {Object? body}) async {
     final epoch = ++_authEpoch;
     _loginInFlight = true;
     try {
@@ -223,11 +243,10 @@ class ApiClient {
           /* login may proceed after failed logout */
         }
       }
-      final data = await _request(
-        'POST',
-        '/auth/login',
-        body: {'email': email, 'password': password},
-      );
+      if (epoch != _authEpoch) {
+        throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');
+      }
+      final data = await _request('POST', path, body: body);
       final result = _parseLogin(data);
       if (epoch != _authEpoch) {
         throw ApiException(401, 'session_changed', '로그인 상태가 변경되었습니다.');

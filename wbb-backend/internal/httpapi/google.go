@@ -39,7 +39,8 @@ func (s *Server) googleHeaders(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]bool{"googleEnabled": s.googleEnabled()})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]bool{"googleEnabled": s.googleEnabled(), "evaluationEnabled": s.cfg.EvaluationLoginEnabled})
 }
 func googleRandom() (string, error) {
 	b := make([]byte, 32)

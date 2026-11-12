@@ -18,6 +18,8 @@
 
 ## 공개 서비스와 물리 기기
 
+2026-11-11 읽기 전용 사전 점검에서 `Labtop` SSH와 기존 Caddy·k3s 계열 클러스터는 접근 가능했다. `live.wombatburrow.com`의 현재 HTTPS 연결은 TLS 단계에서 실패했다. DNS 응답과 원격 SSH 성공을 공개 서비스 또는 ICE/RTP 성공으로 취급하지 않는다. 기존 서비스·볼륨은 변경하지 않았다.
+
 | 필수 확인 | 관측 방법 | 상태 |
 | --- | --- | --- |
 | `https://live.wombatburrow.com` 실제 접속 | 다른 회선의 브라우저에서 신뢰 TLS와 UI/API 응답 | 미완료: 현재 미배포 |

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -60,6 +62,47 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, session, err := s.auth.Login(r.Context(), req.Email, req.Password)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	setRefreshCookie(w, session.RefreshToken, session.ExpiresAt, s.cfg.Env == "prod")
+	writeJSON(w, http.StatusOK, tokenResponse{AccessToken: session.AccessToken, User: user})
+}
+
+// The evaluation account uses the ordinary credential and session ledger.
+// Separate Redis budgets prevent this public, passwordless route from
+// consuming the ordinary login budget or being unbounded when it is enabled.
+func (s *Server) handleEvaluationLogin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "Evaluation login takes no parameters.")
+		return
+	}
+	account := sha256.Sum256([]byte(s.cfg.EvaluationLoginEmail))
+	for _, limit := range []struct {
+		kind, key string
+		count     int64
+	}{
+		{"evaluation-ip", clientIP(r), s.cfg.EvaluationLoginIPLimit},
+		{"evaluation-account", hex.EncodeToString(account[:]), s.cfg.EvaluationLoginAccountLimit},
+	} {
+		if limit.count < 1 {
+			writeError(w, r, http.StatusServiceUnavailable, "unavailable", "Evaluation login is unavailable.")
+			return
+		}
+		ok, retryAfter, err := checkRateLimit(r.Context(), s.redis, limit.kind, limit.key, limit.count, s.cfg.RateLimitWindow, s.rateLimitClock())
+		if err != nil {
+			writeError(w, r, http.StatusServiceUnavailable, "session_store_unavailable", "The session store is temporarily unavailable.")
+			return
+		}
+		if !ok {
+			w.Header().Set("Retry-After", retryAfter)
+			writeDomainError(w, r, errRateLimited)
+			return
+		}
+	}
+	user, session, err := s.auth.Login(r.Context(), s.cfg.EvaluationLoginEmail, s.cfg.EvaluationLoginPassword)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return

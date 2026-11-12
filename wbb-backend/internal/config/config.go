@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -27,17 +28,22 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
-	CORSOrigins         []string
-	StaticDir           string
-	MediaWHIPURL        string // private MediaMTX signaling base, empty disables media
-	MediaSecret         []byte // shared only within the isolated media network
-	MediaCompletionURL  string // private, versioned completion management origin
-	MediaCompletionRoot string
-	MediaCompletionSlot string
-	MediaCompletionKey  []byte // raw HMAC key, distinct from MediaSecret
-	GoogleClientID      string
-	GoogleClientSecret  string
-	GoogleCallbackURI   string
+	CORSOrigins                 []string
+	StaticDir                   string
+	MediaWHIPURL                string // private MediaMTX signaling base, empty disables media
+	MediaSecret                 []byte // shared only within the isolated media network
+	MediaCompletionURL          string // private, versioned completion management origin
+	MediaCompletionRoot         string
+	MediaCompletionSlot         string
+	MediaCompletionKey          []byte // raw HMAC key, distinct from MediaSecret
+	GoogleClientID              string
+	GoogleClientSecret          string
+	GoogleCallbackURI           string
+	EvaluationLoginEnabled      bool
+	EvaluationLoginEmail        string
+	EvaluationLoginPassword     string
+	EvaluationLoginIPLimit      int64
+	EvaluationLoginAccountLimit int64
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -59,17 +65,19 @@ func Load() (Config, error) {
 		RefreshTokenTTL:   7 * 24 * time.Hour,
 		RateLimitRequests: 30,
 		// Per-account default: tighter than the IP limit.
-		RateLimitAccountRequests: 10,
-		RateLimitWindow:          time.Minute,
-		StaticDir:                os.Getenv("WBB_STATIC_DIR"),
-		MediaWHIPURL:             os.Getenv("WBB_MEDIA_WHIP_URL"),
-		MediaSecret:              []byte(os.Getenv("WBB_MEDIA_SECRET")),
-		MediaCompletionURL:       os.Getenv("WBB_COMPLETION_URL"),
-		MediaCompletionRoot:      os.Getenv("WBB_COMPLETION_ROOT"),
-		MediaCompletionSlot:      os.Getenv("WBB_COMPLETION_SLOT"),
-		GoogleClientID:           os.Getenv("WBB_GOOGLE_CLIENT_ID"),
-		GoogleClientSecret:       os.Getenv("WBB_GOOGLE_CLIENT_SECRET"),
-		GoogleCallbackURI:        os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
+		RateLimitAccountRequests:    10,
+		RateLimitWindow:             time.Minute,
+		StaticDir:                   os.Getenv("WBB_STATIC_DIR"),
+		MediaWHIPURL:                os.Getenv("WBB_MEDIA_WHIP_URL"),
+		MediaSecret:                 []byte(os.Getenv("WBB_MEDIA_SECRET")),
+		MediaCompletionURL:          os.Getenv("WBB_COMPLETION_URL"),
+		MediaCompletionRoot:         os.Getenv("WBB_COMPLETION_ROOT"),
+		MediaCompletionSlot:         os.Getenv("WBB_COMPLETION_SLOT"),
+		GoogleClientID:              os.Getenv("WBB_GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:          os.Getenv("WBB_GOOGLE_CLIENT_SECRET"),
+		GoogleCallbackURI:           os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
+		EvaluationLoginIPLimit:      5,
+		EvaluationLoginAccountLimit: 3,
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")
@@ -115,6 +123,39 @@ func Load() (Config, error) {
 			return cfg, errors.New("WBB_GOOGLE_CALLBACK_URI must use HTTPS (dev HTTP requires loopback)")
 		}
 	}
+	evalEnabled := os.Getenv("WBB_EVAL_LOGIN_ENABLED")
+	evalEmail := os.Getenv("WBB_EVAL_LOGIN_EMAIL")
+	evalPassword := os.Getenv("WBB_EVAL_LOGIN_PASSWORD")
+	switch evalEnabled {
+	case "", "false":
+		if evalEmail != "" || evalPassword != "" {
+			return cfg, errors.New("evaluation login credentials require WBB_EVAL_LOGIN_ENABLED=true")
+		}
+	case "true":
+		parsed, err := mail.ParseAddress(evalEmail)
+		if err != nil || parsed.Address != evalEmail || len(evalEmail) > 254 || strings.TrimSpace(evalPassword) == "" {
+			return cfg, errors.New("evaluation login requires a valid email and nonempty password")
+		}
+		cfg.EvaluationLoginEnabled = true
+		cfg.EvaluationLoginEmail = strings.ToLower(evalEmail)
+		cfg.EvaluationLoginPassword = evalPassword
+	default:
+		return cfg, errors.New("WBB_EVAL_LOGIN_ENABLED must be true or false")
+	}
+	if raw := os.Getenv("WBB_EVAL_LOGIN_IP_LIMIT"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 1 {
+			return cfg, errors.New("WBB_EVAL_LOGIN_IP_LIMIT must be a positive integer")
+		}
+		cfg.EvaluationLoginIPLimit = n
+	}
+	if raw := os.Getenv("WBB_EVAL_LOGIN_ACCOUNT_LIMIT"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 1 {
+			return cfg, errors.New("WBB_EVAL_LOGIN_ACCOUNT_LIMIT must be a positive integer")
+		}
+		cfg.EvaluationLoginAccountLimit = n
+	}
 
 	var err error
 	if cfg.AccessTokenTTL, err = durationOr("WBB_ACCESS_TOKEN_TTL", cfg.AccessTokenTTL); err != nil {
@@ -150,6 +191,9 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitWindow, err = durationOr("WBB_RATE_LIMIT_WINDOW", cfg.RateLimitWindow); err != nil {
 		return cfg, err
+	}
+	if cfg.RateLimitWindow < time.Second {
+		return cfg, errors.New("WBB_RATE_LIMIT_WINDOW must be at least 1s")
 	}
 
 	secret := os.Getenv("WBB_JWT_SECRET")

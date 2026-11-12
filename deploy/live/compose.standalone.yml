@@ -1,0 +1,20 @@
+# Standalone server (no existing host Caddy): adds a TLS front on 80/443 that
+# obtains the certificate for WBB_PUBLIC_HOST and proxies to the edge.
+# Usage: WBB_STANDALONE=1 ./scripts.sh up
+services:
+  tls:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    environment:
+      WBB_PUBLIC_HOST: ${WBB_PUBLIC_HOST:?required}
+    volumes:
+      - ./Caddyfile.tls:/etc/caddy/Caddyfile:ro
+      - tls-data:/data
+      - tls-config:/config
+    ports: ["80:80", "443:443"]
+    depends_on:
+      edge: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+volumes:
+  tls-data:
+  tls-config:

@@ -3,6 +3,10 @@
 set -eu
 cd "$(dirname "$0")"
 DC="docker compose --env-file .env -f compose.yml"
+# WBB_STANDALONE=1 (or in .env) adds the TLS front for servers without Caddy.
+if [ "${WBB_STANDALONE:-}" = 1 ] || grep -q '^WBB_STANDALONE=1' .env 2>/dev/null; then
+  DC="$DC -f compose.standalone.yml"
+fi
 case "${1:-}" in
 init-secrets)
   # Creates .env with fresh random secrets if it does not exist yet.
@@ -11,6 +15,8 @@ init-secrets)
   rnd() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
   {
     echo "WBB_PUBLIC_ORIGIN=https://live.wombatburrow.com"
+    echo "WBB_PUBLIC_HOST=live.wombatburrow.com"
+    echo "WBB_STANDALONE=0"
     echo "WBB_DB_PASSWORD=$(rnd 24)"
     echo "WBB_JWT_SECRET=$(rnd 32)"
     echo "WBB_MEDIA_SECRET=$(rnd 32)"

@@ -122,6 +122,12 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
     return publisher;
   }
 
+  /// The owner is publishing this broadcast from this page: show the local
+  /// preview instead of a second, delayed HLS copy of the same stream.
+  bool get _publishingHere =>
+      _publisher?.broadcastId == widget.broadcastId &&
+      (_publisher?.busy ?? false);
+
   void _clearPlayer() {
     _player?.dispose();
     _player = null;
@@ -129,6 +135,18 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
   }
 
   Future<void> _checkPlayback(LiveSession? session) async {
+    if (_publishingHere) {
+      _playbackEpoch++;
+      _checkingPlaybackEpoch = null;
+      _playbackTargetSessionId = null;
+      _clearPlayer();
+      if (mounted) {
+        setState(() {
+          _playbackStatus = '송출 중입니다. 시청자는 몇 초 늦게 같은 화면을 봅니다.';
+        });
+      }
+      return;
+    }
     if (session?.state != 'live') {
       _playbackEpoch++;
       _checkingPlaybackEpoch = null;
@@ -183,6 +201,9 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
         _playerSessionId = access.sessionId;
         _playbackStatus = '재생할 수 있습니다.';
       });
+      // Start muted right away (allowed without a gesture); one tap on
+      // "소리 켜기" then unmutes.
+      unawaited(_play(withSound: false));
     } on ApiException catch (e) {
       if (!mounted || epoch != _playbackEpoch) return;
       setState(() {
@@ -373,7 +394,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
     }
   }
 
-  Widget _stage(BuildContext context, String state) {
+  Widget _stage(BuildContext context, String state, Widget? preview) {
     final scheme = Theme.of(context).colorScheme;
     final player = _player;
     final String message = switch (state) {
@@ -391,7 +412,32 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
         aspectRatio: 16 / 9,
         child: Container(
           color: Colors.black,
-          child: player != null
+          child: preview != null
+              ? Stack(
+                  children: [
+                    Positioned.fill(child: preview),
+                    Positioned(
+                      left: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          '내 송출 미리보기',
+                          key: Key('publish-preview-label'),
+                          style: TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : player != null
               ? player.view
               : Center(
                   child: Column(
@@ -418,7 +464,8 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
     final owner =
         b != null && context.watch<AuthController>().user?.id == b.ownerId;
     final state = _session?.state ?? b?.status ?? 'ready';
-    final active = state == 'starting' || state == 'live' || state == 'stopping';
+    final active =
+        state == 'starting' || state == 'live' || state == 'stopping';
     final publisher = owner
         ? (widget.publisher ?? context.watch<LivePublisher>())
         : null;
@@ -472,7 +519,15 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Center(child: _stage(context, state)),
+                Center(
+                  child: _stage(
+                    context,
+                    state,
+                    owner && publisher!.broadcastId == widget.broadcastId
+                        ? publisher.preview
+                        : null,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -549,11 +604,6 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                   if (publisher.audioRunning &&
                       publisher.phase == PublishPhase.publishing)
                     const Text('오디오 실행 중', key: Key('publish-audio-running')),
-                  if (publisher.preview != null) ...[
-                    const SizedBox(height: 8),
-                    const Text('송출 미리보기'),
-                    SizedBox(height: 240, child: publisher.preview),
-                  ],
                 ],
                 if (owner && (state == 'ready' || state == 'ended')) ...[
                   const SizedBox(height: 8),
@@ -565,45 +615,46 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                 if (_actionError != null)
                   Text(_actionError!, key: const Key('session-action-error')),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.icon(
-                      key: const Key('playback-play'),
-                      onPressed: _player == null
-                          ? null
-                          : () => _play(withSound: false),
-                      icon: const Icon(Icons.play_arrow),
-                      label: const Text('재생'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const Key('playback-sound'),
-                      onPressed: _player == null
-                          ? null
-                          : () => _play(withSound: true),
-                      icon: const Icon(Icons.volume_up),
-                      label: const Text('소리 켜기'),
-                    ),
-                    OutlinedButton(
-                      key: const Key('playback-live'),
-                      onPressed: _player == null
-                          ? null
-                          : () => _player?.goLive(),
-                      child: const Text('라이브로 이동'),
-                    ),
-                    OutlinedButton(
-                      key: const Key('playback-retry'),
-                      onPressed: state != 'live'
-                          ? null
-                          : () {
-                              _clearPlayer();
-                              _checkPlayback(_session);
-                            },
-                      child: const Text('재시도'),
-                    ),
-                  ],
-                ),
+                if (!_publishingHere)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        key: const Key('playback-play'),
+                        onPressed: _player == null
+                            ? null
+                            : () => _play(withSound: false),
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('재생'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('playback-sound'),
+                        onPressed: _player == null
+                            ? null
+                            : () => _play(withSound: true),
+                        icon: const Icon(Icons.volume_up),
+                        label: const Text('소리 켜기'),
+                      ),
+                      OutlinedButton(
+                        key: const Key('playback-live'),
+                        onPressed: _player == null
+                            ? null
+                            : () => _player?.goLive(),
+                        child: const Text('라이브로 이동'),
+                      ),
+                      OutlinedButton(
+                        key: const Key('playback-retry'),
+                        onPressed: state != 'live'
+                            ? null
+                            : () {
+                                _clearPlayer();
+                                _checkPlayback(_session);
+                              },
+                        child: const Text('재시도'),
+                      ),
+                    ],
+                  ),
                 const SizedBox(height: 4),
                 Text(_playbackStatus, key: const Key('playback-status')),
                 const SizedBox(height: 16),

@@ -112,16 +112,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _create() async {
     final auth = context.read<AuthController>();
     if (auth.status != AuthStatus.authenticated) {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
-      );
+      await Navigator.of(context)
+          .push(MaterialPageRoute<void>(builder: (_) => const LoginScreen()));
       if (!mounted ||
           context.read<AuthController>().status != AuthStatus.authenticated) {
         return;
       }
     }
     final created = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(builder: (_) => const BroadcastFormScreen()),
+      MaterialPageRoute<bool>(
+        builder: (_) => const BroadcastFormScreen(openDetailAfterCreate: true),
+      ),
     );
     if (created == true && mounted) _load();
   }
@@ -216,7 +217,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     ChoiceChip(
                       key: const Key('home-filter-live'),
-                      avatar: const Icon(Icons.circle, size: 10, color: Colors.red),
+                      avatar: const Icon(
+                        Icons.circle,
+                        size: 10,
+                        color: Colors.red,
+                      ),
                       label: const Text('방송 중'),
                       selected: _filter == HomeFilter.live,
                       onSelected: (_) => _setFilter(HomeFilter.live),
@@ -322,7 +327,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
 /// One broadcast in the public list.
 class BroadcastCard extends StatelessWidget {
-  const BroadcastCard({super.key, required this.broadcast, required this.onTap});
+  const BroadcastCard({
+    super.key,
+    required this.broadcast,
+    required this.onTap,
+  });
 
   final Broadcast broadcast;
   final VoidCallback onTap;

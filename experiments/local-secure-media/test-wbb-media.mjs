@@ -39,7 +39,7 @@ function mediaWith(displayPrompt, micPrompt, onMic = () => {}) {
 }
 
 function cameraMedia(cameraPrompt) {
-  const documentListeners=new Map(), windowListeners=new Map();
+  const documentListeners=new Map(), windowListeners=new Map(), audioContexts=[];
   let displayCalls=0, cameraCalls=0, constraints;
   const sandbox={
     window:{addEventListener:(name,fn)=>windowListeners.set(name,fn),
@@ -56,9 +56,20 @@ function cameraMedia(cameraPrompt) {
     MediaStream:class {constructor(tracks){this.tracks=tracks;}getTracks(){return this.tracks;}},
     RTCPeerConnection:class {close(){this.closed=true;}},
     RTCRtpSender:{getCapabilities:()=>({codecs:[]})},
+    // Camera audio is routed through WebAudio; the destination track is local.
+    AudioContext:class {
+      constructor(){this.state='suspended';audioContexts.push(this);}
+      resume(){this.state='running';return Promise.resolve();}
+      close(){this.state='closed';return Promise.resolve();}
+      createMediaStreamSource(){return {connect(){}};}
+      createMediaStreamDestination(){
+        const out={kind:'audio',readyState:'live',stop(){this.readyState='ended';},addEventListener(){}};
+        return {stream:{getTracks:()=>[out],getAudioTracks:()=>[out]}};
+      }
+    },
   };
   vm.runInNewContext(source,sandbox);
-  return {media:sandbox.window.WbbMedia,document:sandbox.document,documentListeners,windowListeners,
+  return {media:sandbox.window.WbbMedia,document:sandbox.document,documentListeners,windowListeners,audioContexts,
     get displayCalls(){return displayCalls;},get cameraCalls(){return cameraCalls;},get constraints(){return constraints;}};
 }
 

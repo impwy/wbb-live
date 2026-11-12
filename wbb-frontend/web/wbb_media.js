@@ -78,18 +78,34 @@
     try {
       let video, sound, sharedAudio = true, audioRunning = true;
       if (a.source === 'camera') {
+        // The AudioContext starts inside the click (no await yet). The mic is
+        // routed through it so audio frames keep flowing even when a phone
+        // delivers no microphone samples; otherwise the server transcoder
+        // waits for audio forever and the broadcast never leaves "starting".
+        const audio = new AudioContext();
+        a.audio = audio;
+        const resumed = audio.resume().catch(() => {});
         const camera = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: true,
         });
         a.camera = camera; // register all tracks before any other await
         video = camera.getVideoTracks()[0];
-        sound = camera.getAudioTracks()[0];
-        if (!video || !sound) throw new Error('camera video and microphone are required');
+        const mic = camera.getAudioTracks()[0];
+        if (!video || !mic) throw new Error('camera video and microphone are required');
         a.videoTrack = video;
-        if (stopped(a) || sound.readyState === 'ended') throw new Error('capture cancelled');
+        if (stopped(a) || mic.readyState === 'ended') throw new Error('capture cancelled');
+        mic.addEventListener('ended', () => endAttempt(a), { once: true });
+        const dest = audio.createMediaStreamDestination();
+        a.dest = dest;
+        audio.createMediaStreamSource(new MediaStream([mic])).connect(dest);
+        try {
+          await Promise.race([resumed, new Promise(resolve => setTimeout(resolve, 1500))]);
+        } catch (_) {}
+        if (stopped(a)) throw new Error('capture cancelled');
+        sound = dest.stream.getAudioTracks()[0];
+        audioRunning = audio.state === 'running';
         a.mixed = new MediaStream([video, sound]);
-        sound.addEventListener('ended', () => endAttempt(a), { once: true });
       } else {
         const display = await navigator.mediaDevices.getDisplayMedia({
           video: { frameRate: 30 }, audio: {}, selfBrowserSurface: 'exclude',

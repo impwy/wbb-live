@@ -40,10 +40,10 @@ class _SignupScreenState extends State<SignupScreen> {
     });
     try {
       await context.read<AuthController>().register(
-            _email.text.trim(),
-            _password.text,
-            _displayName.text.trim(),
-          );
+        _email.text.trim(),
+        _password.text,
+        _displayName.text.trim(),
+      );
       if (!mounted) return;
       if (widget.onSignupSuccess != null) {
         widget.onSignupSuccess!();
@@ -54,7 +54,9 @@ class _SignupScreenState extends State<SignupScreen> {
           ..pop();
       }
     } on ApiException catch (e) {
-      setState(() => _error = e.code == 'email_taken' ? '이미 등록된 이메일입니다.' : e.message);
+      setState(
+        () => _error = e.code == 'email_taken' ? '이미 등록된 이메일입니다.' : e.message,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -86,16 +88,21 @@ class _SignupScreenState extends State<SignupScreen> {
                   TextFormField(
                     key: const Key('signup-password'),
                     controller: _password,
-                    decoration: const InputDecoration(labelText: '비밀번호 (12자 이상)'),
+                    decoration: const InputDecoration(
+                      labelText: '비밀번호 (12자 이상)',
+                    ),
                     obscureText: true,
-                    validator: (v) =>
-                        v == null || v.length < 12 ? '비밀번호는 12자 이상이어야 합니다' : null,
+                    validator: (v) => v == null || v.length < 12
+                        ? '비밀번호는 12자 이상이어야 합니다'
+                        : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     key: const Key('signup-display-name'),
                     controller: _displayName,
-                    decoration: const InputDecoration(labelText: '표시 이름 (최대 40자)'),
+                    decoration: const InputDecoration(
+                      labelText: '표시 이름 (최대 40자)',
+                    ),
                     validator: (v) {
                       if (v == null || v.trim().isEmpty) return '표시 이름을 입력하세요';
                       if (v.trim().length > 40) return '40자 이하로 입력하세요';
@@ -105,14 +112,23 @@ class _SignupScreenState extends State<SignupScreen> {
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
-                      child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                      child: Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   const SizedBox(height: 20),
                   FilledButton(
                     key: const Key('signup-submit'),
                     onPressed: _busy ? null : _submit,
                     child: _busy
-                        ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Text('가입하고 로그인'),
                   ),
                 ],

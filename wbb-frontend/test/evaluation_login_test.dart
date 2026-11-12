@@ -210,7 +210,7 @@ void main() {
       expect(find.byKey(const Key('login-google')), findsOneWidget);
       await tester.tap(button);
       await tester.pump();
-      expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+      expect(tester.widget<ButtonStyleButton>(button).onPressed, isNull);
       expect(posts, 1);
       pending.complete(
         jsonReply({

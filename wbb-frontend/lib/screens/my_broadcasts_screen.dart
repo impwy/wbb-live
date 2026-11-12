@@ -68,8 +68,14 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
         title: Text('\'${b.title}\' 삭제'),
         content: const Text('삭제한 방송은 목록에서 사라집니다.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('삭제')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제'),
+          ),
         ],
       ),
     );
@@ -79,7 +85,8 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
       await _load();
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -93,7 +100,9 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
         tooltip: '방송 등록',
         onPressed: () async {
           final created = await Navigator.of(context).push<bool>(
-            MaterialPageRoute<bool>(builder: (_) => const BroadcastFormScreen()),
+            MaterialPageRoute<bool>(
+              builder: (_) => const BroadcastFormScreen(),
+            ),
           );
           if (created == true) _load();
         },
@@ -102,58 +111,61 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('불러오기 실패: $_error'),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        key: const Key('my-broadcasts-retry'),
-                        onPressed: _load,
-                        child: const Text('다시 시도'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('불러오기 실패: $_error'),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    key: const Key('my-broadcasts-retry'),
+                    onPressed: _load,
+                    child: const Text('다시 시도'),
                   ),
-                )
-              : _mine.isEmpty
-                  ? const Center(child: Text('등록한 방송이 없습니다. + 버튼으로 만드세요.'))
-                  : ListView.builder(
-                      itemCount: _mine.length,
-                      itemBuilder: (context, index) {
-                        final b = _mine[index];
-                        return ListTile(
-                          title: Text(b.title),
-                          onTap: () async {
-                            await Navigator.of(context).push<void>(
-                              MaterialPageRoute<void>(builder: (_) => BroadcastDetailScreen(broadcastId: b.id)),
-                            );
-                            if (mounted) _load();
-                          },
-                          subtitle: Text(
-                            '${_statusLabel(b.status)} · 수정 ${_formatDate(b.updatedAt)}',
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (action) async {
-                              if (action == 'edit') {
-                                final changed = await Navigator.of(context).push<bool>(
-                                  MaterialPageRoute<bool>(
-                                    builder: (_) => BroadcastFormScreen(existing: b),
-                                  ),
-                                );
-                                if (changed == true) _load();
-                              } else if (action == 'delete') {
-                                _delete(b);
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(value: 'edit', child: Text('수정')),
-                              PopupMenuItem(value: 'delete', child: Text('삭제')),
-                            ],
+                ],
+              ),
+            )
+          : _mine.isEmpty
+          ? const Center(child: Text('등록한 방송이 없습니다. + 버튼으로 만드세요.'))
+          : ListView.builder(
+              itemCount: _mine.length,
+              itemBuilder: (context, index) {
+                final b = _mine[index];
+                return ListTile(
+                  title: Text(b.title),
+                  onTap: () async {
+                    await Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            BroadcastDetailScreen(broadcastId: b.id),
+                      ),
+                    );
+                    if (mounted) _load();
+                  },
+                  subtitle: Text(
+                    '${_statusLabel(b.status)} · 수정 ${_formatDate(b.updatedAt)}',
+                  ),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (action) async {
+                      if (action == 'edit') {
+                        final changed = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute<bool>(
+                            builder: (_) => BroadcastFormScreen(existing: b),
                           ),
                         );
-                      },
-                    ),
+                        if (changed == true) _load();
+                      } else if (action == 'delete') {
+                        _delete(b);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 'edit', child: Text('수정')),
+                      PopupMenuItem(value: 'delete', child: Text('삭제')),
+                    ],
+                  ),
+                );
+              },
+            ),
     );
   }
 
@@ -161,10 +173,10 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
       '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
 
   String _statusLabel(String status) => switch (status) {
-        'live' => '방송 중',
-        'starting' => '준비 중',
-        'stopping' => '종료 처리 중',
-        'ended' => '종료',
-        _ => '대기',
-      };
+    'live' => '방송 중',
+    'starting' => '준비 중',
+    'stopping' => '종료 처리 중',
+    'ended' => '종료',
+    _ => '대기',
+  };
 }

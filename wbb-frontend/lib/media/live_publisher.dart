@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../api/session_start_key.dart';
 import '../api/wbb_api.dart';
+import 'ice_servers.dart';
 import 'media_platform.dart';
 
 enum PublishPhase {
@@ -83,6 +84,8 @@ class LivePublisher extends ChangeNotifier {
     _set(PublishPhase.capturing);
     // This call enters getDisplayMedia before any API call or await.
     final capture = attempt.media.captureAndOffer();
+    // Started after the device request so it never delays the user gesture.
+    provideIceServers(_api.iceServersJson);
     return _run(attempt, capture);
   }
 

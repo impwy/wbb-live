@@ -4,6 +4,21 @@
   const publishers = new Map();
   const viewers = new Map();
   let nextId = 0;
+  // Pending RTCIceServer list (JSON string or null) for the next publish.
+  let pendingIceServers = null;
+  function provideIceServers(pending) { pendingIceServers = Promise.resolve(pending).catch(() => null); }
+  async function takeIceServers() {
+    const pending = pendingIceServers;
+    pendingIceServers = null;
+    if (!pending) return [];
+    const raw = await Promise.race([pending, new Promise(resolve => setTimeout(() => resolve(null), 4000))]);
+    try {
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (_) {
+      return [];
+    }
+  }
   const id = () => String(++nextId);
   const stopped = a => a.closed || a.videoTrack?.readyState === 'ended';
   const stopTracks = stream => stream?.getTracks().forEach(t => { if (t.readyState !== 'ended') t.stop(); });
@@ -46,12 +61,12 @@
     return a.audio.state === 'running';
   }
 
-  async function waitForIce(pc) {
+  async function waitForIce(pc, limitMs) {
     if (pc.iceGatheringState === 'complete') return;
     await new Promise(resolve => {
       const finish = () => { clearTimeout(timer); pc.removeEventListener('icegatheringstatechange', check); resolve(); };
       const check = () => { if (pc.iceGatheringState === 'complete' || pc.signalingState === 'closed') finish(); };
-      const timer = setTimeout(finish, 2500);
+      const timer = setTimeout(finish, limitMs);
       pc.addEventListener('icegatheringstatechange', check);
     });
   }
@@ -114,7 +129,10 @@
       if (a.source === 'camera') video.addEventListener('ended', () => endAttempt(a), { once: true });
       a.preview.srcObject = a.mixed;
       a.preview.play().catch(() => {});
-      const pc = new RTCPeerConnection();
+      // Capture already started above; TURN credentials are awaited only now.
+      const iceServers = await takeIceServers();
+      if (stopped(a)) throw new Error('capture cancelled');
+      const pc = new RTCPeerConnection({ iceServers });
       a.pc = pc;
       const capabilities = RTCRtpSender.getCapabilities('video');
       const h264 = capabilities?.codecs?.filter(c => c.mimeType.toLowerCase() === 'video/h264') || [];
@@ -124,7 +142,8 @@
       pc.addTransceiver(sound, { direction: 'sendonly' });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await waitForIce(pc);
+      // Relay candidates need a TURN round trip; allow more gathering time.
+      await waitForIce(pc, iceServers.length ? 5000 : 2500);
       if (stopped(a)) throw new Error('capture cancelled');
       const sdp = pc.localDescription?.sdp || '';
       if (!sdp.includes('H264/90000') || !sdp.includes('m=audio') || !sdp.includes('m=video')) {
@@ -243,7 +262,7 @@
     v.video.removeAttribute('src'); v.video.load();
   }
 
-  window.WbbMedia = { newPublisher, publisherVideo: key => publishers.get(key)?.preview,
+  window.WbbMedia = { newPublisher, provideIceServers, publisherVideo: key => publishers.get(key)?.preview,
     captureOffer, acceptAnswer, stopPublisher, resumeAudio, newViewer,
     viewerVideo: key => viewers.get(key)?.video, playViewer, goLive, stopViewer };
 })();

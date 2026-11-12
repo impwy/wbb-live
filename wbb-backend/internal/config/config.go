@@ -44,6 +44,9 @@ type Config struct {
 	EvaluationLoginPassword     string
 	EvaluationLoginIPLimit      int64
 	EvaluationLoginAccountLimit int64
+	TURNKeyID                   string        // Cloudflare TURN key id; empty disables relay credentials
+	TURNAPIToken                string        // secret API token for the TURN key
+	TURNCredentialTTL           time.Duration // lifetime of issued TURN credentials
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -78,6 +81,9 @@ func Load() (Config, error) {
 		GoogleCallbackURI:           os.Getenv("WBB_GOOGLE_CALLBACK_URI"),
 		EvaluationLoginIPLimit:      5,
 		EvaluationLoginAccountLimit: 3,
+		TURNKeyID:                   os.Getenv("WBB_TURN_KEY_ID"),
+		TURNAPIToken:                os.Getenv("WBB_TURN_API_TOKEN"),
+		TURNCredentialTTL:           12 * time.Hour,
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")
@@ -142,6 +148,14 @@ func Load() (Config, error) {
 	default:
 		return cfg, errors.New("WBB_EVAL_LOGIN_ENABLED must be true or false")
 	}
+	if (cfg.TURNKeyID == "") != (cfg.TURNAPIToken == "") {
+		return cfg, errors.New("WBB_TURN_KEY_ID and WBB_TURN_API_TOKEN must be set together")
+	}
+	for _, r := range cfg.TURNKeyID {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return cfg, errors.New("WBB_TURN_KEY_ID has invalid characters")
+		}
+	}
 	if raw := os.Getenv("WBB_EVAL_LOGIN_IP_LIMIT"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 1 {
@@ -191,6 +205,12 @@ func Load() (Config, error) {
 	}
 	if cfg.RateLimitWindow, err = durationOr("WBB_RATE_LIMIT_WINDOW", cfg.RateLimitWindow); err != nil {
 		return cfg, err
+	}
+	if cfg.TURNCredentialTTL, err = durationOr("WBB_TURN_TTL", cfg.TURNCredentialTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.TURNCredentialTTL < time.Minute || cfg.TURNCredentialTTL > 48*time.Hour {
+		return cfg, errors.New("WBB_TURN_TTL must be between 1m and 48h")
 	}
 	if cfg.RateLimitWindow < time.Second {
 		return cfg, errors.New("WBB_RATE_LIMIT_WINDOW must be at least 1s")

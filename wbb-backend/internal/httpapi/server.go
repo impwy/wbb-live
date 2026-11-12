@@ -34,6 +34,7 @@ type Server struct {
 	log          *slog.Logger
 	googleClient *http.Client
 	mediaClient  *http.Client
+	turnClient   *http.Client
 	completion   *mediacompletion.Client
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
@@ -53,7 +54,7 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if cfg.MediaCompletionURL != "" {
 		completion, _ = mediacompletion.NewClient(cfg.MediaCompletionURL, cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), completion: completion}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), turnClient: &http.Client{Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, completion: completion}
 }
 
 // RunMaintenance reconciles durable preparation timeouts independently of
@@ -93,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.rateLimit("refresh", requireOrigin(s, s.handleRefresh)))
 	mux.HandleFunc("POST /api/v1/auth/logout", requireOrigin(s, s.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("GET /api/v1/media/ice-servers", s.requireAuth(s.handleICEServers))
 	mux.HandleFunc("GET /api/v1/auth/providers", s.handleProviders)
 	mux.HandleFunc("GET /api/v1/auth/google/start", s.googleHeaders(s.rateLimit("google-start", s.handleGoogleStart)))
 	mux.HandleFunc("GET /api/v1/auth/google/callback", s.googleHeaders(s.rateLimit("google-callback", s.handleGoogleCallback)))

@@ -30,6 +30,8 @@ init-secrets)
     echo "WBB_EVAL_LOGIN_ENABLED=false"
     echo "WBB_EVAL_LOGIN_EMAIL="
     echo "WBB_EVAL_LOGIN_PASSWORD="
+    echo "WBB_TURN_KEY_ID="
+    echo "WBB_TURN_API_TOKEN="
   } > .env
   echo "wrote .env (edit WBB_ICE_HOSTS)";;
 bootstrap)

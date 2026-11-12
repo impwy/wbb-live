@@ -344,6 +344,19 @@ class ApiClient {
     return User.fromJson(data['user'] as Map<String, dynamic>);
   }
 
+  /// RTCIceServer list (JSON) for publishing, including short-lived TURN
+  /// relay credentials when the server has them. Null on any failure: the
+  /// publisher then uses the server's direct ICE candidates only.
+  Future<String?> iceServersJson() async {
+    try {
+      final data = await _request('GET', '/media/ice-servers', auth: true);
+      final servers = data['iceServers'];
+      return servers is List ? jsonEncode(servers) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // -- broadcasts ------------------------------------------------------------
 
   Future<BroadcastPage> listBroadcasts({

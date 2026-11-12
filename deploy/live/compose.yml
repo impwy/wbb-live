@@ -48,6 +48,9 @@ services:
       WBB_EVAL_LOGIN_ENABLED: ${WBB_EVAL_LOGIN_ENABLED:-false}
       WBB_EVAL_LOGIN_EMAIL: ${WBB_EVAL_LOGIN_EMAIL:-}
       WBB_EVAL_LOGIN_PASSWORD: ${WBB_EVAL_LOGIN_PASSWORD:-}
+      # Optional Cloudflare TURN relay for publishers behind blocked ICE ports.
+      WBB_TURN_KEY_ID: ${WBB_TURN_KEY_ID:-}
+      WBB_TURN_API_TOKEN: ${WBB_TURN_API_TOKEN:-}
       # Behind the proxies every client shares one RemoteAddr bucket, so the
       # per-IP budgets are global budgets here (see README).
       WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}

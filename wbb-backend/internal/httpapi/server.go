@@ -104,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.EvaluationLoginEnabled {
 		mux.HandleFunc("POST /api/v1/auth/evaluation-login", requireOrigin(s, s.handleEvaluationLogin))
 	}
+	if len(s.cfg.QuickLogins) > 0 {
+		mux.HandleFunc("POST /api/v1/auth/quick-login/{id}", requireOrigin(s, s.handleQuickLogin))
+	}
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.rateLimit("refresh", requireOrigin(s, s.handleRefresh)))
 	mux.HandleFunc("POST /api/v1/auth/logout", requireOrigin(s, s.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))

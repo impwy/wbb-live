@@ -40,7 +40,11 @@ func (s *Server) googleHeaders(next http.HandlerFunc) http.HandlerFunc {
 }
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, map[string]bool{"googleEnabled": s.googleEnabled(), "evaluationEnabled": s.cfg.EvaluationLoginEnabled})
+	quick := make([]map[string]string, 0, len(s.cfg.QuickLogins))
+	for _, a := range s.cfg.QuickLogins {
+		quick = append(quick, map[string]string{"id": a.ID, "label": a.Label})
+	}
+	writeJSON(w, 200, map[string]any{"googleEnabled": s.googleEnabled(), "evaluationEnabled": s.cfg.EvaluationLoginEnabled, "quickLogins": quick})
 }
 func googleRandom() (string, error) {
 	b := make([]byte, 32)

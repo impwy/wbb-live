@@ -74,18 +74,39 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // Separate Redis budgets prevent this public, passwordless route from
 // consuming the ordinary login budget or being unbounded when it is enabled.
 func (s *Server) handleEvaluationLogin(w http.ResponseWriter, r *http.Request) {
+	s.passwordlessLogin(w, r, "evaluation", s.cfg.EvaluationLoginEmail, s.cfg.EvaluationLoginPassword)
+}
+
+// handleQuickLogin: POST /api/v1/auth/quick-login/{id} signs in as one of
+// the server-configured test accounts. The browser only knows the id and
+// label; the credentials stay in the server's account file.
+func (s *Server) handleQuickLogin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, a := range s.cfg.QuickLogins {
+		if a.ID == id {
+			s.passwordlessLogin(w, r, "quick", a.Email, a.Password)
+			return
+		}
+	}
+	writeError(w, r, http.StatusNotFound, "not_found", "Unknown test account.")
+}
+
+// passwordlessLogin signs in a server-held account through the ordinary
+// credential and session ledger, with its own per-IP and per-account Redis
+// budgets so these public routes cannot drain the normal login budget.
+func (s *Server) passwordlessLogin(w http.ResponseWriter, r *http.Request, kind, email, password string) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.RawQuery != "" || r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "Evaluation login takes no parameters.")
 		return
 	}
-	account := sha256.Sum256([]byte(s.cfg.EvaluationLoginEmail))
+	account := sha256.Sum256([]byte(email))
 	for _, limit := range []struct {
 		kind, key string
 		count     int64
 	}{
-		{"evaluation-ip", clientIP(r), s.cfg.EvaluationLoginIPLimit},
-		{"evaluation-account", hex.EncodeToString(account[:]), s.cfg.EvaluationLoginAccountLimit},
+		{kind + "-ip", clientIP(r), s.cfg.EvaluationLoginIPLimit},
+		{kind + "-account", hex.EncodeToString(account[:]), s.cfg.EvaluationLoginAccountLimit},
 	} {
 		if limit.count < 1 {
 			writeError(w, r, http.StatusServiceUnavailable, "unavailable", "Evaluation login is unavailable.")
@@ -102,7 +123,7 @@ func (s *Server) handleEvaluationLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	user, session, err := s.auth.Login(r.Context(), s.cfg.EvaluationLoginEmail, s.cfg.EvaluationLoginPassword)
+	user, session, err := s.auth.Login(r.Context(), email, password)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return

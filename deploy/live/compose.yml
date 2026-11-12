@@ -56,6 +56,9 @@ services:
       # donations use the in-server test gateway.
       WBB_TOSS_CLIENT_KEY: ${WBB_TOSS_CLIENT_KEY:-}
       WBB_TOSS_SECRET_KEY: ${WBB_TOSS_SECRET_KEY:-}
+      # Optional one-click test accounts: "label<TAB>email<TAB>password" lines
+      # in a host file (chmod 600). Unset mounts an empty file (disabled).
+      WBB_QUICK_LOGIN_FILE: /run/wbb/quick-logins
       # Behind the proxies every client shares one RemoteAddr bucket, so the
       # per-IP budgets are global budgets here (see README).
       WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}
@@ -64,6 +67,7 @@ services:
       WBB_EVAL_LOGIN_ACCOUNT_LIMIT: ${WBB_EVAL_LOGIN_ACCOUNT_LIMIT:-30}
     volumes:
       - recordings:/recordings:ro
+      - ${WBB_QUICK_LOGIN_HOST_FILE:-/dev/null}:/run/wbb/quick-logins:ro
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

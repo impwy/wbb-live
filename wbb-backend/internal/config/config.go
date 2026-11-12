@@ -48,6 +48,7 @@ type Config struct {
 	TURNAPIToken                string        // secret API token for the TURN key
 	TURNCredentialTTL           time.Duration // lifetime of issued TURN credentials
 	RecordingsDir               string        // read-only MediaMTX recordings root; empty disables replays
+	QuickLogins                 []QuickLogin  // server-held test accounts offered as one-click logins
 	TossClientKey               string        // Toss Payments test client key (browser); empty uses the in-server test gateway
 	TossSecretKey               string        // Toss Payments test secret key (server only)
 
@@ -153,6 +154,13 @@ func Load() (Config, error) {
 		cfg.EvaluationLoginPassword = evalPassword
 	default:
 		return cfg, errors.New("WBB_EVAL_LOGIN_ENABLED must be true or false")
+	}
+	if path := os.Getenv("WBB_QUICK_LOGIN_FILE"); path != "" {
+		loaded, err := loadQuickLogins(path)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.QuickLogins = loaded
 	}
 	if (cfg.TossClientKey == "") != (cfg.TossSecretKey == "") {
 		return cfg, errors.New("WBB_TOSS_CLIENT_KEY and WBB_TOSS_SECRET_KEY must be set together")

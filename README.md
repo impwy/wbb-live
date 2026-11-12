@@ -41,7 +41,7 @@
 
 ### 시험 계정 (이메일 로그인)
 
-로그인 화면의 이메일·비밀번호로 로그인합니다. 시연 전용 계정이며 실제 개인 정보·비밀번호가 아닙니다. 역할은 시연 용도의 이름이고 권한은 모두 일반 회원과 같습니다(누구나 방송 등록 가능, 자기 방송만 수정·삭제·송출 제어).
+로그인 화면의 **시험 계정으로 바로 로그인** 버튼(심사위원·방송자1~3·시청자1~3)을 누르면 비밀번호 입력 없이 해당 계정으로 로그인됩니다. 이메일·비밀번호로 직접 로그인해도 됩니다. 시연 전용 계정이며 실제 개인 정보·비밀번호가 아닙니다. 역할은 시연 용도의 이름이고 권한은 모두 일반 회원과 같습니다(누구나 방송 등록 가능, 자기 방송만 수정·삭제·송출 제어).
 
 | 역할 | 표시 이름 | 이메일 | 비밀번호 |
 | --- | --- | --- | --- |
@@ -199,6 +199,7 @@ make ci               # vet, test, flutter analyze/test/build
 | `WBB_EVAL_LOGIN_ENABLED/EMAIL/PASSWORD` | 평가용 바로 로그인 (세 값 모두 설정 또는 모두 미설정) |
 | `WBB_GOOGLE_CLIENT_ID/SECRET/CALLBACK_URI` | Google 로그인(선택, 세 값 모두 필요) |
 | `WBB_ICE_HOSTS`, `WBB_ICE_PORT` | 브라우저에 알릴 WebRTC 후보 주소와 포트 (deploy/live) |
+| `WBB_QUICK_LOGIN_FILE` | 선택. 시험 계정 바로 로그인용 서버 파일(`표시이름<TAB>이메일<TAB>비밀번호` 줄). 브라우저에는 id·표시 이름만 전달 |
 | `WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY` | 선택. 토스페이먼츠 테스트 키(`test_` 접두사만 허용, 둘 다 또는 둘 다 미설정). 미설정 시 서버 내장 테스트 결제 |
 | `WBB_RECORDINGS_DIR` | 선택. 녹화 저장 경로(worker 쓰기, API 읽기 전용). 미설정 시 녹화·다시보기 비활성 |
 | `WBB_TURN_KEY_ID`, `WBB_TURN_API_TOKEN` | 선택. Cloudflare TURN 키. 설정하면 방송자 브라우저가 단기 TURN 자격(`GET /api/v1/media/ice-servers`, 로그인 필요)으로 미디어를 중계해, ICE 포트를 열 수 없는 환경에서도 송출됩니다 |
@@ -234,8 +235,9 @@ media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결
 | POST `/auth/refresh` | refresh 쿠키(Origin 검증) | 회전. 재사용 감지 시 family 전체 폐기 |
 | POST `/auth/logout` | refresh 쿠키 또는 access JWT | 204 멱등. 두 자격 모두 독립 폐기 |
 | GET `/auth/me` | access JWT | 200 `{user}` |
+| POST `/auth/quick-login/{id}` | 공개(Origin 검증, 계정 파일 설정 시에만 존재) | 본문 없음. 서버에 보관한 시험 계정의 일반 세션 발급 |
 | POST `/auth/evaluation-login` | 공개(Origin 검증, 활성 시에만 존재) | 본문 없음. 평가 계정의 일반 세션 발급, 별도 요청 한도 |
-| GET `/auth/providers` | 공개 | `{googleEnabled, evaluationEnabled}` |
+| GET `/auth/providers` | 공개 | `{googleEnabled, evaluationEnabled, quickLogins:[{id,label}]}` (자격 증명 미포함) |
 | GET `/auth/google/start` | 공개 | state·nonce·PKCE 생성, Google로 이동 |
 | GET `/auth/google/callback` | state·브라우저 결합 검증 | 토큰 교환·계정 확인 후 고정 완료 화면으로303 |
 | GET `/broadcasts` | 공개 | `{items,nextCursor}` cursor 페이지네이션(기본 20/최대 50). `status=live`(방송 중만), `ownerId=` 필터 |

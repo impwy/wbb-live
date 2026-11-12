@@ -1,0 +1,40 @@
+# PROPOSAL ONLY. Import inside live.wombatburrow.com's `route` block before
+# any broad fallback. If that host does not exist yet, add one host block to
+# the existing Caddy config first (see README.md). Do not create duplicate
+# host blocks. Preserve the site's certificate/TLS setup; no `tls internal`
+# for public clients. Caddy must reach the three private targets.
+# Set WBB_MEDIA_ORIGIN=https://live.wombatburrow.com (no :443).
+# Set auth values outside the repository. WHIP/HLS upstreams must remain private.
+route /__media-check/* {
+    basic_auth {
+        {$WBB_MEDIA_AUTH_USER} {$WBB_MEDIA_AUTH_HASH}
+    }
+    @wbb_whip_no_origin {
+        path /__media-check/whip*
+        method POST PATCH DELETE
+        not header Origin *
+    }
+    respond @wbb_whip_no_origin "Forbidden: missing Origin" 403
+    @wbb_whip_wrong_origin {
+        path /__media-check/whip*
+        method POST PATCH DELETE
+        not header Origin {$WBB_MEDIA_ORIGIN}
+    }
+    respond @wbb_whip_wrong_origin "Forbidden: wrong Origin" 403
+    handle_path /__media-check/whip/* {
+        reverse_proxy {$WBB_MEDIA_WHIP_UPSTREAM} {
+            header_down Location ^/(.*) /__media-check/whip/$1
+        }
+    }
+    handle_path /__media-check/hls/* {
+        reverse_proxy {$WBB_MEDIA_HLS_UPSTREAM} {
+            header_down Location ^/(.*) /__media-check/hls/$1
+        }
+    }
+    handle /__media-check/* {
+        uri strip_prefix /__media-check
+        root * {$WBB_MEDIA_WEB_ROOT}
+        file_server
+    }
+    respond 404
+}

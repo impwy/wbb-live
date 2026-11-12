@@ -1,0 +1,8 @@
+services:
+  mediamtx:
+    volumes:
+      - ./mediamtx.flutter.yml:/run/config/mediamtx.yml:ro
+  caddy:
+    volumes:
+      - ./Caddyfile.flutter:/etc/caddy/Caddyfile:ro
+      - ../../wbb-frontend/build/web:/srv/www:ro

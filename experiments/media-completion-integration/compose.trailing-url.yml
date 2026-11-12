@@ -1,0 +1,9 @@
+# Isolated startup regression: both product processes receive the same
+# trailing-slash management origin. Apply only with this project's base file.
+services:
+  api:
+    environment:
+      WBB_COMPLETION_URL: http://mediamtx:9998/
+  worker:
+    environment:
+      WBB_COMPLETION_URL: http://mediamtx:9998/

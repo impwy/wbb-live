@@ -1,0 +1,46 @@
+logLevel: info
+logDestinations: [stdout]
+readTimeout: 5s
+writeTimeout: 5s
+
+authMethod: http
+authHTTPAddress: http://api:8080/internal/mediamtx/auth
+authHTTPExclude: []
+
+api: true
+apiAddress: :9997
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: false
+srt: false
+moq: false
+playback: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+hlsAlwaysRemux: false
+hlsAllowOrigins: ["https://live.wombatburrow.com"]
+
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :18391
+webrtcLocalTCPAddress: :18391
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: []  # overridden by MTX_WEBRTCADDITIONALHOSTS
+webrtcAllowOrigins: ["https://live.wombatburrow.com"]
+webrtcSTUNGatherTimeout: 2s
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 6s
+
+pathDefaults:
+  source: publisher
+  overridePublisher: false
+  record: false
+paths:
+  "~^wbb/[0-9a-f-]+/[0-9]+/(source|720p)$":
+    source: publisher
+    overridePublisher: false

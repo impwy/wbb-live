@@ -1,0 +1,63 @@
+# WBB VAAPI spike — isolated docker project on the Labtop server.
+# Loopback-only host publishes; ICE is TCP-only (18390, same number in/out)
+# so a browser on the developer machine reaches it through SSH -L without
+# assuming UDP-over-TCP. No privileged mode, no host network, no host
+# packages: the GPU is accessed via the render node device only.
+name: wbb-media-vaapi
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3-ffmpeg@sha256:208e9f1740a09a5ee63b6308e77ce0d54fce0456462f640e6bd9acfc62ebb5a2
+    # Image entrypoint is /mediamtx; pass only the config path.
+    command: ["/run/config/mediamtx.yml"]
+    volumes:
+      - ./mediamtx.yml:/run/config/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:18888:8888" # HLS (SSH -L 127.0.0.1:8888 -> 18888)
+      - "127.0.0.1:18889:8889" # WHIP/WHEP HTTP (SSH -L 127.0.0.1:8889 -> 18889)
+      - "127.0.0.1:19990:9990" # admin API — loopback only
+      - "127.0.0.1:18554:8554" # RTSP (server-side verification only)
+      # ICE/TCP (same number in/out; SSH -L 127.0.0.1:18390 -> 18390).
+      # UDP is deliberately NOT published: this spike is TCP-ICE only.
+      - "127.0.0.1:18390:18390"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9990/v3/paths/list"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # GPU transcode loop: software decode allowed, encode MUST be h264_vaapi.
+  # On failure it retries the same VAAPI pipeline — never substitutes CPU.
+  transcoder:
+    build:
+      context: .
+      dockerfile: Dockerfile.transcoder
+    image: wbb-media-vaapi/transcoder:alpine3.24
+    entrypoint: ["/bin/sh", "/run/transcode-vaapi.sh"]
+    volumes:
+      - ./transcode-vaapi.sh:/run/transcode-vaapi.sh:ro
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Synthetic RTSP publisher for server-side (phase A) verification.
+  # Enabled with: docker compose --profile source up -d source
+  source:
+    image: wbb-media-vaapi/transcoder:alpine3.24
+    entrypoint: ["/bin/sh", "/run/synth-source.sh"]
+    volumes:
+      - ./synth-source.sh:/run/synth-source.sh:ro
+    environment:
+      # Interpolated so callers can parameterize the source size; the
+      # resolution script passes SRC_WIDTH/SRC_HEIGHT explicitly.
+      SRC_WIDTH: "${SRC_WIDTH:-1280}"
+      SRC_HEIGHT: "${SRC_HEIGHT:-720}"
+      SRC_FPS: "${SRC_FPS:-30}"
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    profiles: ["source"]
+    restart: unless-stopped

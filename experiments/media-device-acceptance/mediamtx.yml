@@ -1,0 +1,46 @@
+# WBB device acceptance — MediaMTX 1.21.3 (isolated config).
+# HTTP ports are NOT published to the host; Caddy proxies them internally.
+# Only ICE/TCP is published (see docker-compose.yml).
+
+api: false
+rtsp: true
+rtspAddress: :8554
+rtmp: false
+srt: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+# Behind Caddy reverse proxy; Caddy handles auth and origin checking.
+hlsAllowOrigins: ["*"]
+
+webrtc: true
+webrtcAddress: :8889
+# TCP-only ICE (UDP not tunnelled through proxies).
+webrtcLocalUDPAddress: ""
+webrtcLocalTCPAddress: :__ICE_PORT__
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [__ICE_HOST__]
+# Behind Caddy; Caddy enforces the origin for mutations.
+webrtcAllowOrigins: ["*"]
+
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: playback
+        path:
+
+paths:
+  spike/source:
+    source: publisher
+  spike/720p:
+    source: publisher

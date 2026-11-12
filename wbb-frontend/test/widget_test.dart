@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:wbb_frontend/screens/home_screen.dart' show formatBroadcastDate;
 import 'package:wbb_frontend/api/wbb_api.dart';
 import 'package:wbb_frontend/main.dart';
 
@@ -56,7 +57,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('첫 방송'), findsOneWidget);
-    expect(find.text('Alice · 2026.11.06'), findsOneWidget);
+    expect(
+      find.text(
+        'Alice · ${formatBroadcastDate(DateTime.parse('2026-11-06T10:00:00Z'))}',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('로그인'), findsOneWidget);
     expect(find.text('대기'), findsOneWidget);
   });

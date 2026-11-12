@@ -18,7 +18,7 @@ class Broadcast {
   final String title;
   final String description;
   final int version;
-  final String status; // ready | live | ended (media steps add more)
+  final String status; // ready | starting | live | stopping | ended
   final DateTime createdAt;
   final DateTime updatedAt;
 

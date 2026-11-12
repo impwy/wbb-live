@@ -2,14 +2,14 @@
 
 **What to build:** 로그인한 방송자가 방송 상세에서 화면·두 음원을 송출하고 비로그인 시청자가 다른 기기에서 시청한다. 소유자 종료 후 실제 연결과 변환이 멈춘다.
 
-**Blocked by:** 01 이메일 인증·방송 관리, 02 단일 품질 미디어 검증.
+**Blocked by:** 01 이메일 인증·방송 관리(완료). 2026-11-09 사용자 승인으로 로컬 구현은02 실제 기기·외부망 인수 전에 진행한다. 제품 인수 완료에는02 실제 관문이 여전히 필요하다.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
-**실행 가능 여부:** 선행 미완료로 blocked.
+**실행 가능 여부:** 로컬 단일 품질 구현 허용. 실제 휴대폰·외부망·VAAPI 인수와03 ABR는 미완료로 유지한다. 첫 범위는 `04a-local-session-control.md`, 이후 WHIP/변환/Flutter 송출·시청을 연결한다.
 
 - [ ] STARTING은 ingress와 출력이 준비된 이후 LIVE가 되고 실패/시간초과는 STOPPING을 거쳐 종료된다.
-- [ ] grant는 회차·로그인 세션·owner에 묶이고120초 이내 신규 POST만 허용한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 resource 소유권으로 처리한다.
+- [ ] grant는 회차·로그인 family·owner에 묶이고 초기 TTL30초(상한120초), 회차 준비60초를 넘지 않는 만료로 신규 POST만 허용한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 resource 소유권으로 처리한다.
 - [ ] 안정된 로그인 식별자는 auth family이며 정상 refresh 후 제어가 유지된다. family 폐기 시 STOPPING, 다른 로그인 family의 동일 owner는 방송 stop API로 종료할 수 있다.
 - [ ] grant 초기 TTL30초·회차 준비 제한60초·최초 ingress 이후 유실15초를 구분한다. 생성 작업을 영속 예약해 중복 POST, stop과 늦은201, upstream 응답 유실·API 재시작을 정리하고 미해결 작업이 있으면 ENDED를 금지한다.
 - [ ] 시작 멱등 재응답은 같은 회차와 원래 유효 grant 또는 null+상태를 반환한다. 만료 grant 갱신은 같은 family·준비 제한 이전·미해결 생성 없음 조건을 검사한다.

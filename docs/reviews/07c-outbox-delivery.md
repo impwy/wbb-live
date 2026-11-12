@@ -1,0 +1,48 @@
+# 07-C outbox 전달 중간 리뷰
+
+기준e501812 이후 작업트리와 untracked 제품/실험 파일을 포함했다. 구현 중이며 최종 동결 검토가 아니다. 두 독립 리뷰는 읽기 전용이며 검사를 대신 실행하지 않았다.
+
+## Standards
+
+확정P2 2건, 수정 요청됨.
+
+1. postgres_test.go에서 defer admin.Close가 t.Cleanup DROP보다 먼저 실행된다. 닫힌 pool에서 DROP이 실패하고 오류도 무시해 테스트 DB를 남긴다. admin 종료와 DROP 수명을 맞추고 실패를 숨기지 않아야 한다.
+2. HTTP 통합 검사가 공유 testPool 전체의 outbox에서 자기 회차 이벤트 수만큼 Step한다. 앞선 테스트 이벤트를 처리하고 자기 회차는 미발행으로 남을 수 있다. 격리 또는 제한 시간 안에 자기 회차 전달 완료까지 처리하는 검사가 필요하다. 단독 검사 통과와 전체 회귀를 구분한다.
+
+이벤트 fixture 중복은 선택 개선1건이며 차단 조건이 아니다.
+
+## Spec
+
+확정P2 2건, 수정 요청됨.
+
+1. CLI run은 최초 DB 연결/Ping 실패 시 종료하므로 DB 장애 중 프로세스 재시작 후 자동 복구가 안 된다. 실행 모드의 초기 연결도 취소 가능한 backoff/jitter 재시도가 필요하다. 일회성 stats/requeue는 유한 실패가 가능하다.
+2. stats 집계만으로 격리된 event_id와 last_error_code를 알 수 없다. 민감 payload 없는 목록 또는 정확한 운영 SQL 절차가 필요하다.
+
+초기 사전 검토에서 조건부 갱신0건을 무시하던 문제는 claim_lost 결과로, 모호한 CLI 오류는 고정 오류 코드로 보완됐다. 최종 재검토 전이다.
+
+## 남은 검증
+
+실제 Kafka 중단 중 방송 종료·권한 차단, broker ACK 후 DB 마킹 실패와 프로세스 종료의 구분, 다중 발행과 늦은 이전 응답, DB 재시작, 격리/재처리 및 재처리 후 이전 claim 응답, 종료 신호·재개를 확인해야 한다. 진행 중 실행 결과를 완료로 가정하지 않는다. unknown/known 미디어 종료 증거는 별도07-A 범위다.
+
+
+## 수정 후 중간 재검토
+
+초기 DB 연결 재시도, 테스트 DB cleanup 순서/실패 보고, 공유 outbox 전달 검사의 P2는 코드상 해소됐다. 실제 전체 회귀 결과는 별도 확인한다. 격리 목록 명령은 추가됐으나 최신100개 제한으로 오래된 항목 접근이 막히는 P2가 남아 보완 요청했다. 안전한 전체 조회/페이지 탐색과 정확한 ID 재처리 경로가 필요하다.
+
+실제 Kafka 중단 HTTP 검사는 prepare/stop 및 미발행 보존의 근거다. 실제 미디어 종료·권한 차단·복구 consumer 수신을 이 결과로 대신하지 않는다. 후속검사가 구현 중이다.
+
+## 최종 후보 독립 재검토 (666218c 이후 작업트리)
+
+Standards: 차단 지적 0건. 테스트 DB 삭제 수명과 실패 보고, 공유 outbox의 자기 회차 완료 대기 수정이 확인됐다.
+
+Spec: 제품 로직의 새 확정 결함은 없으며 운영 문서 P2 1건을 보완 요청했다. 최근 100개 밖의 격리 항목은 정확한 ID 조회와 전체 ID SQL로 접근할 수 있다. README에 claim/lease/fencing 계약, ACK 후 DB 실패와 실제 프로세스 종료 구분, DB 재시작 및 종료 신호 재현 방법, 공식 버전·설정 근거를 추가해야 한다.
+
+구현자 실행 로그의 Kafka 중단 Flutter camera 검사에서는 H264·Opus, 익명 7프레임과 660Hz 마이크 음원, 종료 후 playback409/HLS403/이전grant409 및 released/ended가 확인됐다. 카메라 검사는 두 음원 혼합 증거가 아니다. 최초 직접 fetch 검증기의401은 화면 refresh로 회전된 인증 세션의 토큰을 재사용한 것으로 구현자가 조사했으며 제품 Flutter 흐름 재검사는 통과했다. 조정자의 독립 재실행은 아직 수행 전이다.
+
+두 리뷰는 읽기 전용 정적 검사이며, 동결 전 문서와 최종 실행 결과를 완료로 간주하지 않는다.
+
+조정자의 outboxdelivery·CLI 단위 race 검사는 통과했다. 실제 PostgreSQL 환경변수 없이 실행했으므로 통합 검사는 제외된다. 구현자 최종 전체 Go race 로그는 httpapi 98.831초 및 outboxdelivery 6.767초 등 전체 통과를 기록했다. 이후 requeue 뒤 늦은 Retry/Quarantine 회귀가 추가되어 해당 변경 재검사가 필요하다. README는 장애 재현·공식 근거를 보완했으며 실제 DB 컨테이너 재시작은 미검증으로 명시했다. 실제 DB 재시작과 SIGTERM 후 재개는 완료기준이므로 검증 전07-C 완료 처리하지 않는다.
+
+## 최종 후보 판정
+
+운영문서보완과process integration 추가분을두축에서재검토했다. Standards0건,Spec0건이며추가확정결함은없다. INSERT후UPDATE의fixture경합은단일INSERT에서next_attempt_at를설정하도록수정했다. 조정자의전체Go race·vet,실제DB재시작/TERM,실제Kafka중단Flutter미디어검사가통과했고검증중제품해시는변경되지않았다. 상세증거와검증한계는docs/verification/07c-outbox-delivery.md를따른다.

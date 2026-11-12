@@ -1,60 +1,163 @@
-# WBB (wombatburrow)
+# WBB Live (wombatburrow)
 
-치지직 스타일의 실시간 라이브 방송 플랫폼입니다. 방송자는 PC 화면(공유 오디오+마이크) 또는 휴대폰 카메라·마이크로 송출하고, 시청자는 로그인 없이 웹에서 시청합니다.
+치지직 스타일의 실시간 라이브 방송 웹 서비스입니다. 방송자는 **PC 화면 + 탭/시스템 소리 + 마이크** 또는 **휴대폰 카메라 + 마이크**로 송출하고, 시청자는 로그인 없이 웹 브라우저에서 시청합니다.
 
-- **상태**: 티켓01 이메일 인증·방송 CRUD 구현 및 검증 완료. 티켓02 로컬 합성 미디어 검증83항목 통과(실제 기기·외부망 검증은 미완료). 제품 송출·시청·Google 로그인은 아직 미완료.
-- **서비스 URL**: 아직 미배포. 운영 목표는 `https://live.wombatburrow.com`(티켓 09).
-- **평가 로그인**: 별도 계정 없음. 현재는 로컬 실행 후 화면의 가입 절차로 직접 계정을 만들어 사용한다.
-- 설계 계약: `docs/design.md` (Codex 관리)
-- 요구사항: `requirements/` (원본 보존)
-- 용어: `GLOSSARY.md`
+| 항목 | 내용 |
+| --- | --- |
+| 서비스 주소 | **https://live.wombatburrow.com** |
+| 테스트 로그인 | 로그인 화면의 **「평가용 바로 로그인」** 버튼 (비밀번호 입력 없음). 직접 회원가입도 가능 |
+| 지원 브라우저 | PC 송출: Chrome·Edge 최신 버전(탭/시스템 소리 공유는 Chromium 계열 기능) / 모바일 송출: 카메라·마이크 권한을 지원하는 최신 모바일 Chrome·Safari / 시청: 최신 PC·모바일 브라우저 |
+| 기술 스택 | Go API · Flutter Web · PostgreSQL · Redis · MediaMTX(WebRTC WHIP 수신, LL-HLS 배포) · FFmpeg |
 
-## 구성
+## 평가용 로그인
+
+1. https://live.wombatburrow.com 접속 → 오른쪽 위 **로그인**.
+2. **평가용 바로 로그인**을 누르면 서버에 미리 준비한 평가 전용 계정으로 로그인됩니다.
+3. 평가 계정은 여러 심사자가 공유합니다. 같은 평가 계정으로 로그인한 사람끼리는 서로의 방송을 수정·삭제·중지할 수 있습니다. 소유자 권한을 확인하려면 **회원가입**으로 두 번째 계정을 만들어 비교해 주세요(아래 "권한 확인").
+
+평가 로그인은 서버 환경변수로 켤 때만 버튼과 API(`POST /api/v1/auth/evaluation-login`)가 활성화됩니다. 실제 계정 비밀번호는 서버 비밀 설정에만 있고 저장소·응답·로그에 없습니다.
+
+## 기능 확인 절차
+
+### 방송 등록·수정·삭제 (BCAST-01)
+
+1. 로그인 후 목록 화면의 **방송 등록**(오른쪽 아래) 또는 상단 **내 방송** → **+** 를 누릅니다.
+2. 제목(1~100자)과 설명을 입력해 저장하면 목록에 나타납니다.
+3. 방송 상세 화면 오른쪽 위의 ✏️(수정)·🗑️(삭제), 또는 **내 방송**의 메뉴에서 수정·삭제합니다. 방송 중에는 삭제할 수 없습니다(먼저 중지).
+
+### PC 화면 방송 (PC-01~04)
+
+1. PC Chrome/Edge에서 로그인 → 내 방송의 상세 화면으로 이동합니다.
+2. **화면 공유 시작**을 누르고, 브라우저 공유 창에서 **Chrome 탭**(또는 전체 화면)을 고른 뒤 **탭 오디오 공유(시스템 오디오 공유)** 를 켭니다. 이어서 마이크 권한을 허용합니다.
+3. 상태가 `송출: 송출 중`, 방송 상태가 **LIVE**가 되면 공유한 화면·소리와 마이크 음성이 함께 송출됩니다. 공유 소리가 없으면 화면에 안내가 표시됩니다.
+4. **방송 중지** 또는 브라우저의 **공유 중지**를 누르면 송출 연결이 닫히고 상태가 **종료**로 바뀝니다. 종료 후에는 이전 시청 URL로 재생할 수 없습니다.
+
+### 휴대폰 카메라 방송 (MOB-01~03)
+
+1. 휴대폰 브라우저에서 로그인 → 내 방송 상세 화면에서 **카메라·마이크 시작**을 누르고 카메라·마이크 권한을 허용합니다.
+2. 미리보기가 나오고 **LIVE**가 되면 영상과 음성이 송출됩니다.
+3. **방송 중지**를 누르면 종료됩니다. 송출 중 화면을 끄거나 다른 앱으로 전환하면 방송이 자동 종료되며, 돌아와도 자동으로 다시 송출하지 않습니다.
+
+### 시청 (BCAST-02, AUTH-02)
+
+1. **다른 기기**(로그인 불필요)에서 https://live.wombatburrow.com 접속 → 목록의 **방송 중** 필터 또는 **LIVE** 표시 카드를 선택합니다.
+2. 영상이 준비되면 **재생**, 소리는 **소리 켜기**를 누릅니다(브라우저 자동재생 정책 때문에 소리는 직접 켜야 합니다). 지연이 쌓이면 **라이브로 이동**을 누릅니다.
+3. 방송자가 중지하면 시청 화면이 "방송이 종료되었습니다."로 바뀝니다. 목록은 10초, 상세는 5초마다 상태를 갱신합니다.
+
+### 권한 확인 (AUTH-01~03)
+
+| 사용자 | 목록·상세·시청 | 방송 등록·송출 | 남의 방송 수정·삭제·송출 제어 |
+| --- | --- | --- | --- |
+| 비로그인 | 허용 | 거절(로그인 화면으로 이동, API 401) | 거절(401) |
+| 방송 소유자 | 허용 | 허용 | — (자기 방송은 허용) |
+| 다른 사용자 | 허용 | 자기 방송만 허용 | 거절(서버 403, 화면에 버튼 없음) |
+
+서버는 모든 수정·삭제·송출 시작/중지·송출 권한 갱신 요청에서 인증 세션과 방송 소유자를 확인합니다. 예: 다른 계정의 access token으로 `PATCH /api/v1/broadcasts/{id}` → `403 forbidden`.
+
+### 영속성 (BCAST-04)
+
+방송 정보·회차·종료 상태는 PostgreSQL에 저장됩니다. API·DB 컨테이너를 재시작해도 목록·상세·종료 상태가 그대로 조회됩니다.
+
+## 현재 공개 환경의 제약
+
+- **외부망(다른 회선)에서의 송출**은 서버의 WebRTC ICE 포트(UDP/TCP 18391)로 직접 연결하거나, 포트가 막힌 경우 Cloudflare TURN 중계를 거칩니다. 중계 시 지연이 약간 늘 수 있습니다. 시청·로그인·방송 관리는 HTTPS만 사용합니다. 현재 상태는 아래 "공개 배포 상태"에 기록합니다.
+- 화질은 단일 720p(H.264)입니다. 다중 화질(ABR)·댓글·도네이션·녹화는 구현하지 않았습니다(선택 요구사항).
+- 프록시 뒤에서는 클라이언트 IP별이 아닌 전체 공용 요청 한도로 동작합니다.
+
+### 공개 배포 상태
+
+2026-11-12 공개 URL에서 확인한 결과입니다. 서버와 **다른 인터넷 회선**의 PC에서 실행했습니다.
+
+| 확인 항목 | 결과 |
+| --- | --- |
+| 공개 HTTPS(신뢰 인증서)·화면·API | ✅ 정상 |
+| 평가용 바로 로그인, 잘못된 Origin 거절(403) | ✅ 정상 |
+| 방송 등록 → 카메라·마이크 WHIP 송출 → LIVE 전환 | ✅ 약 9초 내 LIVE (Chrome, 합성 카메라·마이크) |
+| 로그인하지 않은 별도 Chrome에서 LL-HLS 재생 | ✅ 재생 시간 지속 증가, 멈춤 0회 |
+| 방송 중지 → 종료 상태 전환, 종료 후 재생 거절 | ✅ 약 1초 내 `ended`, 재생 요청 409 |
+| 인가 없는 HLS 요청 | ✅ 403 |
+| 실제 휴대폰(LTE) 카메라 송출 | ⏳ 송출·시청 연결은 확인했으나 약 15초 뒤 변환이 끊기는 문제를 발견해 수정 배포, 재확인 중 |
+
+자동 점검 스크립트: `node deploy/live/verify-public.mjs https://live.wombatburrow.com` (송출용 Chrome은 합성 장치를 사용하므로 실제 기기 확인과 구분합니다).
+
+## 직접 실행하기
+
+### 전체 스택 (송출·시청 포함, Docker)
+
+필요: Docker + Docker Compose, Flutter 3.47.x(웹 빌드용).
+
+```bash
+git clone https://github.com/impwy/wbb-live.git && cd wbb-live
+(cd wbb-frontend && flutter build web --release --no-web-resources-cdn)
+cp -r wbb-frontend/build/web deploy/live/web
+cd deploy/live
+./scripts.sh init-secrets          # 무작위 비밀값으로 .env 생성 (권한 600)
+# .env 편집: 로컬에서는 아래처럼 바꿉니다.
+#   WBB_PUBLIC_ORIGIN=http://localhost:19480
+#   WBB_ICE_HOSTS=127.0.0.1
+./scripts.sh bootstrap             # 이미지 빌드 + 완료 이력 볼륨 최초 1회 초기화
+./scripts.sh up                    # 기동
+```
+
+브라우저에서 http://localhost:19480 을 엽니다(localhost는 보안 컨텍스트라 화면 공유·카메라가 동작합니다). 다른 기기에서 접속하려면 HTTPS가 필요하므로 아래 공개 배포 방식을 사용합니다.
+
+평가용 바로 로그인을 켜려면 일반 가입으로 계정을 만든 뒤 `.env`에 세 값을 모두 넣고 `./scripts.sh up`을 다시 실행합니다.
+
+```bash
+WBB_EVAL_LOGIN_ENABLED=true
+WBB_EVAL_LOGIN_EMAIL=<evaluation-account-email>
+WBB_EVAL_LOGIN_PASSWORD=<evaluation-account-password>
+```
+
+### 공개 배포 (live.wombatburrow.com)
+
+`deploy/live/` 구성을 서버에서 위와 같이 실행하고(`WBB_PUBLIC_ORIGIN=https://live.wombatburrow.com`, `WBB_ICE_HOSTS=<공인IP>,<LAN IP>`), 호스트 Caddy에 `deploy/live/live.caddy` 사이트를 추가해 TLS를 종료합니다. 공유기에서 TCP 80/443과 ICE 포트 UDP/TCP 18391을 서버로 전달합니다. DB·Redis·MediaMTX 관리 API는 외부에 열지 않습니다. 자세한 구성은 [deploy/README.md](deploy/README.md)를 참고하세요.
+
+### 개발용 (API·화면만)
+
+```bash
+make deps-up          # PostgreSQL(55432) + Redis(56379), 127.0.0.1 바인딩
+make run-backend      # API http://localhost:8080
+make frontend-run     # Flutter 개발 서버 http://localhost:3000
+make test-backend     # 실제 PostgreSQL 대상 통합 테스트(-race)
+make ci               # vet, test, flutter analyze/test/build
+```
+
+### 주요 환경변수
+
+| 변수 | 설명 |
+| --- | --- |
+| `WBB_DATABASE_URL` | PostgreSQL 접속 URL (필수) |
+| `WBB_REDIS_ADDR` | Redis 주소 (세션 캐시·요청 한도) |
+| `WBB_JWT_SECRET` | access JWT 서명 키, 운영 필수(32바이트 이상) |
+| `WBB_CORS_ORIGINS` | 인증 POST에 허용할 정확한 Origin (예: `https://live.wombatburrow.com`) |
+| `WBB_MEDIA_SECRET`, `WBB_COMPLETION_*` | API·worker·MediaMTX 간 내부 인증과 송출 종료 근거 계약 |
+| `WBB_EVAL_LOGIN_ENABLED/EMAIL/PASSWORD` | 평가용 바로 로그인 (세 값 모두 설정 또는 모두 미설정) |
+| `WBB_GOOGLE_CLIENT_ID/SECRET/CALLBACK_URI` | Google 로그인(선택, 세 값 모두 필요) |
+| `WBB_ICE_HOSTS`, `WBB_ICE_PORT` | 브라우저에 알릴 WebRTC 후보 주소와 포트 (deploy/live) |
+| `WBB_TURN_KEY_ID`, `WBB_TURN_API_TOKEN` | 선택. Cloudflare TURN 키. 설정하면 방송자 브라우저가 단기 TURN 자격(`GET /api/v1/media/ice-servers`, 로그인 필요)으로 미디어를 중계해, ICE 포트를 열 수 없는 환경에서도 송출됩니다 |
+
+예시 값은 `deploy/live/env.example`, `.env.example`에 자리표시자로만 있습니다. 실제 비밀값은 저장소에 넣지 않습니다.
+
+## 구조
+
+```
+브라우저 ──HTTPS──▶ Caddy ─┬─ /            Flutter Web 정적 파일
+                           ├─ /api/v1/*     Go API ── PostgreSQL / Redis
+                           └─ /media/*      (API 인가 후) MediaMTX LL-HLS
+방송자 브라우저 ──WHIP(API 중계)──▶ MediaMTX ◀──ICE UDP/TCP 18391── WebRTC 미디어
+media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결·변환 정리
+```
 
 | 경로 | 내용 |
 | --- | --- |
-| `wbb-backend/` | Go API 서버 (`net/http` + pgx + go-redis, Argon2id, HS256 JWT) |
-| `wbb-frontend/` | Flutter Web 앱 (방송 목록/상세, 가입·로그인, 내 방송 CRUD) |
-| `experiments/media-single-rendition/` | 로컬 미디어 실험. [실행 조건과 알려진 실패](experiments/media-single-rendition/README.md) |
-| `deploy/` | 배포 구성 (Caddy/k3s, 추후 확장) |
-| `docs/`, `.scratch/` | 설계 문서와 티켓 (Codex 관리) |
+| `wbb-backend/` | Go API(`cmd/wbb-api`)와 미디어 worker(`cmd/wbb-media-worker`) |
+| `wbb-frontend/` | Flutter Web 앱 (목록·상세·시청, 가입·로그인, 내 방송, 송출) |
+| `deploy/live/` | 운영 Docker Compose, 내부 Caddy, MediaMTX 설정 |
+| `experiments/` | 미디어 검증 스택과 MediaMTX 종료 근거 패치(`experiments/media-completion`) |
+| `docs/`, `.scratch/` | 설계(`docs/design.md`), 검증 기록, 티켓 |
 
-데이터 저장: PostgreSQL(원장) + Redis(세션 활성 sid 캐시·rate limit). Kafka·미디어 스택은 후속 단계에서 추가됩니다.
-
-## 사전 요구
-
-- Go 1.27.3+
-- Flutter 3.47.x (stable)
-- Docker & Docker Compose (PostgreSQL/Redis 실행용)
-
-## 빠른 시작
-
-```bash
-make deps-up          # PostgreSQL(55432) + Redis(56379) 기동 (127.0.0.1에만 바인딩)
-make run-backend      # API 서버 기동 (http://localhost:8080)
-
-# Flutter 개발 서버 (API를 http://localhost:8080로 지정)
-make frontend-run     # http://localhost:3000
-
-# 또는: 정적 웹 번들을 빌드해 API가 직접 제공
-make frontend-build   # wbb-frontend/build/web 생성
-WBB_STATIC_DIR=../wbb-frontend/build/web make run-backend
-```
-
-전체 백엔드 스택(API+PostgreSQL+Redis)은 `docker compose up --build`로 띄울 수 있습니다.
-Flutter 웹 번들은 compose에 포함되지 않으며 `make frontend-build`로 별도 빌드해
-`WBB_STATIC_DIR` 또는 Caddy 등의 정적 서버로 제공합니다.
-
-### 환경변수
-
-`.env.example` 참고. 비밀값은 항상 환경변수로만 전달하고 저장소에 넣지 않습니다.
-개발용 compose의 DB 비밀번호(`wbb-dev-password`)는 로컬 전용 자리표시자입니다.
-
-- `WBB_DATABASE_URL`(필수), `WBB_REDIS_ADDR`
-- `WBB_JWT_SECRET`(prod 필수, 32바이트 이상). dev에서 미설정 시 프로세스마다 임시 키 생성 → 기존 access JWT는 무효가 되지만, 불투명 refresh 토큰과 PostgreSQL 세션은 원칙적으로 유지되어 refresh로 재로그인 없이 복구된다
-- `WBB_CORS_ORIGINS`: auth POST(가입/로그인/refresh/logout)에 허용되는 정확한 Origin 목록. 운영은 `https://live.wombatburrow.com`
-- `WBB_ACCESS_TOKEN_TTL`(기본 10m), `WBB_REFRESH_TOKEN_TTL`(기본 168h)
-- `WBB_RATE_LIMIT_REQUESTS`(IP별, 기본 30/분), `WBB_RATE_LIMIT_ACCOUNT_REQUESTS`(계정별, 기본 10/분)
+방송 상태: `ready`(대기) → `starting`(준비 중) → `live`(방송 중) → `stopping`(종료 중) → `ended`(종료). 종료는 MediaMTX가 송출 연결 종료를 기록한 근거를 서버가 확인한 뒤에 확정하며, 그때 변환 프로세스와 HLS 접근도 정리됩니다.
 
 ## API 요약 (`/api/v1`)
 
@@ -65,43 +168,38 @@ Flutter 웹 번들은 compose에 포함되지 않으며 `make frontend-build`로
 | POST `/auth/refresh` | refresh 쿠키(Origin 검증) | 회전. 재사용 감지 시 family 전체 폐기 |
 | POST `/auth/logout` | refresh 쿠키 또는 access JWT | 204 멱등. 두 자격 모두 독립 폐기 |
 | GET `/auth/me` | access JWT | 200 `{user}` |
-| GET `/broadcasts` | 공개 | `{items,nextCursor}` cursor 페이지네이션(기본 20/최대 50) |
+| POST `/auth/evaluation-login` | 공개(Origin 검증, 활성 시에만 존재) | 본문 없음. 평가 계정의 일반 세션 발급, 별도 요청 한도 |
+| GET `/auth/providers` | 공개 | `{googleEnabled, evaluationEnabled}` |
+| GET `/auth/google/start` | 공개 | state·nonce·PKCE 생성, Google로 이동 |
+| GET `/auth/google/callback` | state·브라우저 결합 검증 | 토큰 교환·계정 확인 후 고정 완료 화면으로303 |
+| GET `/broadcasts` | 공개 | `{items,nextCursor}` cursor 페이지네이션(기본 20/최대 50). `status=live`(방송 중만), `ownerId=` 필터 |
 | POST `/broadcasts` | 로그인 | 201. `ownerId`는 서버가 결정 |
 | GET `/broadcasts/{id}` | 공개 | 404 포함 |
 | PATCH `/broadcasts/{id}` | 소유자 | `version` 조건부 갱신, 충돌 409 |
-| DELETE `/broadcasts/{id}?version=N` | 소유자 | soft delete, 204 |
+| DELETE `/broadcasts/{id}?version=N` | 소유자 | soft delete, 204; 활성 회차가 있으면409 |
+| POST `/broadcasts/{id}/sessions` | 소유자 | source, Idempotency-Key;202 준비 회차·단기 grant |
+| GET `/broadcasts/{id}/sessions/current` | 공개 | 현재/최근 회차 또는 null; 민감 정보 제외 |
+| POST `/broadcasts/{id}/sessions/{sid}/stop` | 소유자 |202 종료 처리, 이미 종료면200 |
+| POST `/broadcasts/{id}/sessions/{sid}/publish-grants` | 원래 로그인 family의 소유자 | 조건을 만족하는 준비 회차의 만료 grant 갱신 |
 | GET `/health/live`, `/health/ready` | 공개/내부 | 프로세스 생존 / DB·마이그레이션 준비 |
 
 오류 형식: `{"error":{"code","message","requestId"}}`. 인증 세션의 최종 원장은 PostgreSQL `auth_session_families`/`auth_sessions`이며 Redis는 캐시일 뿐(장애 시 보호 API 503 fail-closed, 누락 시 원장으로 자가 복구).
 
-## 테스트
-
-테스트 경계: 공개 HTTP API(권한·상태), 실제 PostgreSQL 영속성, Flutter 사용자 동작.
-
-```bash
-make test-backend      # 실제 PG 대상 통합 테스트 (-race). Redis는 실행마다 disposable 컨테이너로 격리
-make vet-backend
-make frontend-analyze  # flutter analyze
-make frontend-test     # 위젯/API 클라이언트 테스트
-make frontend-build    # web release 빌드 (--no-web-resources-cdn, CanvasKit 로컬 제공)
-make ci                # 위 전체
-```
-
-CI(GitHub Actions, `.github/workflows/ci.yml`)도 동일하게 backend(`go vet/test -race/govulncheck`)와 frontend(`analyze/test/build`)를 실행합니다.
-
 ## 보안 노트
 
-- 비밀번호 Argon2id(PHC 형식 저장), access JWT는 브라우저 메모리에만 보관(localStorage 미사용).
-- refresh 토큰은 `Secure; HttpOnly; SameSite=Lax; Path=/api/v1/auth` 쿠키로만 전달, 회전 주기마다 갱신.
-- 가입·로그인·refresh·logout 모두 Origin 정확 일치 검증. IP/계정별 rate limit은 가입·로그인·refresh에 적용(logout은 제외).
-- 로그·응답에 비밀번호·토큰·SQL·DSN을 남기지 않습니다(테스트 오류 메시지도 DSN 마스킹).
+- 비밀번호 Argon2id 저장, access JWT는 브라우저 메모리에만 보관(localStorage 미사용).
+- refresh 토큰은 `Secure; HttpOnly; SameSite=Lax` 쿠키로만 전달하고 매 갱신마다 회전, 재사용 감지 시 전체 폐기.
+- 인증 POST는 Origin 정확 일치 검증, 가입·로그인·refresh·평가 로그인에 요청 한도 적용.
+- 송출(WHIP)은 소유자에게 발급한 단기 grant로만, 시청(HLS)은 서버 인가를 거쳐서만 허용합니다. DB·Redis·MediaMTX 관리 API는 외부에 노출하지 않습니다.
+- 로그·응답에 비밀번호·토큰·DSN을 남기지 않습니다.
 
-## 배포 (예정)
-
-`deploy/` 참고. Labtop 서버의 k3s, Caddy(`live.wombatburrow.com`), MediaMTX/FFmpeg, 전용 LGTM 스택은 후속 티켓에서 구성합니다. CDN은 사용하지 않습니다.
+이 프로젝트는 AI 개발 도구(Codex, Claude Code 등)를 적극 활용해 설계·구현·검증했습니다.
 
 ## 라이선스/출처
 
 - 백엔드: Go 표준 라이브러리, [pgx](https://github.com/jackc/pgx), [go-redis](https://github.com/redis/go-redis), [jwt](https://github.com/golang-jwt/jwt), [x/crypto](https://pkg.go.dev/golang.org/x/crypto) (Argon2id)
 - 프런트엔드: Flutter, [http](https://pub.dev/packages/http), [provider](https://pub.dev/packages/provider)
+- 미디어 서버: [MediaMTX](https://github.com/bluenviron/mediamtx) v1.21.3 (MIT) + 종료 근거 기록 패치(`experiments/media-completion/upstream.patch`), [FFmpeg](https://ffmpeg.org) (MediaMTX 공식 ffmpeg 이미지 포함), 역방향 프록시 [Caddy](https://caddyserver.com) (Apache-2.0)
+- HLS 재생: [hls.js](https://github.com/video-dev/hls.js), 로컬 번들 `wbb-frontend/web/vendor/hls.min.js`와 라이선스·포함 구성요소 고지 `wbb-frontend/web/vendor/hls.js.LICENSE.txt`. 기존 미디어 실험에서 검증한 동일 번들을 사용하며 런타임 CDN에서 가져오지 않는다.
 - 한글 폰트: [Noto Sans KR](https://github.com/google/fonts/tree/main/ofl/notosanskr) (SIL OFL 1.1, 라이선스 전문 `wbb-frontend/assets/fonts/OFL.txt`) — 폰트를 번들해 런타임 CDN 요청이 없다. 번들 폰트에 없는 글리프(예: 일부 이모지)는 로컬 폴백 경로(`/assets/fonts/fallback/`)로만 해석되며 미지원 글리프로 표시될 수 있다.
+

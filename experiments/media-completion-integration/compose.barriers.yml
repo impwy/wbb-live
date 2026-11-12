@@ -1,0 +1,22 @@
+# Isolated product barrier verification only. Keeps the existing project,
+# state volume and loopback ports; never use this overlay for deployment.
+services:
+  api:
+    environment:
+      WBB_MEDIA_WHIP_URL: http://barrier-proxy:8889
+    depends_on:
+      barrier-proxy: {condition: service_started}
+  mediamtx:
+    environment:
+      WBB_COMPLETION_BARRIERS: "1"
+  barrier-proxy:
+    image: node:22-alpine
+    command: ["node", "/fixture/barrier-proxy.mjs"]
+    environment:
+      WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?required}
+      WBB_COMPLETION_ROOT: ${WBB_COMPLETION_ROOT:?required}
+      WBB_COMPLETION_SLOT: ${WBB_COMPLETION_SLOT:?required}
+    volumes:
+      - ./barrier-proxy.mjs:/fixture/barrier-proxy.mjs:ro
+    ports: ["127.0.0.1:29990:8890"]
+    networks: [private]

@@ -88,11 +88,11 @@ DB 부분 유일 인덱스로 방송별 `STARTING/LIVE/STOPPING` 회차를 최�
 | POST /broadcasts/{id}/sessions/{sid}/publish-grants | 소유자, STARTING에서만 | 201 단기 grant |
 | POST /live-sessions/{sid}/whip | publish grant | WHIP 규격 응답, 외부 안전 Location |
 | PATCH /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권·활성 회차 | WHIP 규격 ICE 처리 |
-| DELETE /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권 | 204 연결 삭제, 종료 요청 |
+| DELETE /live-sessions/{sid}/whip/{resource} | access JWT·resource 소유권 | 202 종료 요청 수락; 실제 완료는 회차 ENDED로 확인 |
 | GET /broadcasts/{id}/playback | 공개 | LIVE면200 {sessionId,masterUrl}; 미송출409 |
 | POST /playback-events | 공개, 크기/빈도/필드 제한 | 202 집계용 이벤트 수락 |
 
-방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 외부 JSON 상태값은 `ready`, `starting`, `live`, `stopping`, `ended`로 소문자 직렬화한다. 도메인 상태표의 대문자와 의미는 같다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 회차와 grant는 소유자에게만 보내고 캐시하지 않는다.
+방송 객체는 `id, ownerId, owner:{id,displayName}, title, description, version, status, currentSessionId, createdAt, updatedAt`만 공개한다. `status`는 활성 회차의 상태, 회차가 없으면 READY, 마지막 회차가 종료됐으면 ENDED다. 외부 JSON 상태값은 `ready`, `starting`, `live`, `stopping`, `ended`로 소문자 직렬화한다. 도메인 상태표의 대문자와 의미는 같다. 이메일·로그인 세션·grant·내부 미디어 주소는 포함하지 않는다. 회차 생성 응답은 {session:{id,broadcastId,state,version,startedAt,endedAt},publishGrant:{token,expiresAt,whipUrl}}이다. 이 생성 응답과 grant는 소유자에게만 보내고 캐시하지 않는다. 공개 현재/최근 회차 조회는 {session: null 또는 {id,broadcastId,state,version,startedAt,endedAt}}만 반환하며 family·grant·미디어 내부 식별자를 포함하지 않는다.
 
 Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저장한다. 같은 키/같은 입력은 동일 회차로 응답하고, 같은 키/다른 입력은409다. 다른 키로 활성 회차를 중복 시작해도409다. 이미 송출 중인 회차에 새 publish grant를 발급해 두 번째 송출자가 기존 연결을 탈취하게 하지 않는다. grant가 만료된 STARTING 회차만 갱신할 수 있다.
 
@@ -125,11 +125,11 @@ Idempotency-Key는 로그인 사용자·방송·작업별로 묶어24시간 저�
 
 API/worker 시작 시 및 주기5초마다 활성 회차와 실제 미디어 상태를 대조한다. worker lease는 단일 소유권을 보장하되 시간이 지난 lease를 인계할 수 있어야 한다. 콜백은 private network 인증을 거치고 `session_id, media_generation, connection_id`와 현재 상태를 검사한다. 중복·역순 이벤트는 무해해야 한다. DB 재시작 후 연결이 남은 경우에도 검증 없이 ENDED→LIVE로 바꾸지 않는다.
 
-WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 작업을 DB에 예약한다. 회차별 미해결 생성 작업은 하나만 허용하고 동일 grant의 동시 POST는409로 거절한다. STOPPING 이후 도착한 생성 성공은 클라이언트에 공개하지 않고 해당 연결만 정리한다. 응답 유실·프로세스 재시작으로 결과가 불명확하면 회차 전용 미디어 경로와 제어 API로 확인한다. 생성 결과와 정리가 해결되기 전에는 새 생성 및 ENDED 확정을 금지한다. 이 최소 재조정은04에 포함하며07의 Kafka 작업까지 미루지 않는다.
+WHIP upstream 생성 전에 회차·generation·grant jti에 연결된 생성 작업을 DB에 예약한다. 회차별 미해결 생성 작업은 하나만 허용하고 동일 grant의 동시 POST는409로 거절한다. 송출할 SDP digest와 검증된 MediaMTX contract/root/slot/epoch/sequence를 작업에 고정한 뒤 첫 upstream byte를 보낸다. STOPPING 이후 도착한 생성 성공은 클라이언트에 공개하지 않는다. 응답 유실·프로세스 재시작으로 Location을 몰라도 저장된 operation ID와 epoch로 close/query를 재시도한다. upstream 4xx·DELETE 200/204/404·자원 부재는 완료 증거가 아니다. 해당 작업의 검증된 `completed` 또는 직렬화된 never-sent 증거, FFmpeg 실행 종료 및 새 자원 snapshot을 확인한 뒤에만 ENDED를 확정한다. 계약이 없는 구형 미완료 작업은 새 epoch를 소급 대입하지 않고 STOPPING에 남긴다. 운영 처리 기준은 [구형 미디어 작업 절차](operations/legacy-media-operations.md)를 따른다.
 
 ## 7. WHIP 인증과 브라우저 캡처
 
-publish grant는 로그인 JWT와 별개이며 `aud=publish`, 고유 jti, 회차·방송자·로그인 family·generation에 묶인 단기 일회성 자격이다. TTL은 §6을 따른다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 family 활성 상태·owner·회차 상태를 확인하고 생성 작업을 예약한다. family 활성은 DB에서 family가 미폐기이며 그 family에 현재 비폐기·미만료 auth session이 존재하는 것으로 판정한다. 최초 sid의 만료로 정상 회전 후 권한을 끊지 않는다. 생성한 resource는 서버에 owner·family·회차·generation으로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
+publish grant는 로그인 JWT와 별개이며 `aud=wbb-publish`, 고유 jti, 회차·방송자·로그인 family·generation에 묶인 단기 일회성 자격이다. TTL은 §6을 따른다. URL query에 넣지 않고 Authorization 헤더로 보낸다. API 중계 POST는 grant 서명·서버 family 활성 상태·owner·회차 상태를 확인하고 생성 작업을 예약한다. family 활성은 DB에서 family가 미폐기이며 그 family에 현재 비폐기·미만료 auth session이 존재하는 것으로 판정한다. 최초 sid의 만료로 정상 회전 후 권한을 끊지 않는다. 생성한 resource는 서버에 owner·family·회차·generation으로 매핑한다. 이후 PATCH/DELETE는 갱신 가능한 access JWT와 해당 매핑으로 인증하므로 grant 만료가 장시간 방송의 ICE 처리·정리를 막지 않는다. 로그아웃 후에는 서버 종료 작업이 resource를 정리한다. STOPPING/ENDED면 새 POST/PATCH를 거절하고 정리용 DELETE만 허용한다. 중계하는 Location은 동일 출처의 불투명 resource ID로 다시 쓰며 임의 upstream URL을 입력받지 않는다.
 
 MediaMTX ingress endpoint는 외부 직접 노출하지 않는다. 외부 인증 콜백을 통해 회차의 활성 여부를 재검사하고 두 번째 publisher가 첫 publisher를 교체하지 못하게 설정한다. FFmpeg의 내부 read/publish 자격과 브라우저 grant는 분리하고 최종 rendition 경로에 브라우저가 직접 publish하지 못하게 한다. 버전별 WHIP Location/PATCH/DELETE와 MediaMTX 연결 종료 API 지원은 02번 검증에서 확인하고 어댑터에 가둔다. 외부 HTTP 인증의 action/path 검사는 [MediaMTX 인증 문서](https://mediamtx.org/docs/features/authentication)를 기준으로 한다(2026-11-06 확인).
 
@@ -153,7 +153,7 @@ WebRTC 미디어는 Caddy HTTP 경로와 별도다. UDP ICE 포트, 필요 시 T
 - rendition readiness/실패를 master 갱신에 반영하며, 최신 목록에 없는 품질을 플레이어가 계속 요청하지 않도록 복구하는가.
 - MediaMTX 단독 복수 경로로 안정된 ABR이 불가능하면 결과와 필요한 packager 변경을 Codex에 보고한다. 검증 없이 FFmpeg 기본 HLS 출력을 LL-HLS라고 부르거나 멀티 비트레이트 완료로 표시하지 않는다. 한 품질 검증은 필수 라이브 기능의 중간 성과로 기록할 수 있으나 ABR 인수 완료가 아니다.
 
-브라우저는 지원되는 경우 native HLS, 그 외 hls.js를 Flutter HTML view에 붙인다. 자동재생 거절 시 재생/소리 켜기 버튼을 제공한다. quality=auto와 검증된 고정 품질을 제공하고 시청 화면은 비로그인으로 열린다. manifest/segment는 public URL이어도 session 상태 gate를 거친다. 캐시로 종료 후 gate를 우회하지 않도록 no-store를 기본으로 하고 CDN은 사용하지 않는다. Caddy 프록시는 LL-HLS 요청의 query를 유지하며 blocking reload를 임의 버퍼링·짧은 timeout으로 깨뜨리지 않는다.
+제품 플레이어는 실제 검증한 브라우저별 재생 경로를 Flutter HTML view에 붙인다. 로컬 실험의 Chrome은 native HLS 지원 응답과 달리 실제 재생이 실패해 hls.js/MSE를 우선 사용한다. Safari native HLS 정책은 실제 기기 검증 후 확정하며, 지원 여부 문자열만으로 재생 가능하다고 판정하지 않는다. 이 실험 결과가 제품 Flutter 플레이어 구현 완료를 뜻하지 않는다. 자동재생 거절 시 재생/소리 켜기 버튼을 제공한다. quality=auto와 검증된 고정 품질을 제공하고 시청 화면은 비로그인으로 열린다. manifest/segment는 public URL이어도 session 상태 gate를 거친다. 캐시로 종료 후 gate를 우회하지 않도록 no-store를 기본으로 하고 CDN은 사용하지 않는다. Caddy 프록시는 LL-HLS 요청의 query를 유지하며 blocking reload를 임의 버퍼링·짧은 timeout으로 깨뜨리지 않는다.
 
 ## 9. Kafka·복구·영속성
 
@@ -197,3 +197,7 @@ DNS는 `live` 하위 도메인의 DNS only로 구성한다. CNAME은 대상 체�
 README에는 서비스 URL, 실제 동작하는 평가 로그인 방법, 런타임·환경변수 예시, 실행·migration·중지·백업 방법, PC/모바일 송출·시청·종료 절차, 검증된 지원 환경, 알려진 제약, OSS 출처를 포함한다. 평가용 계정은 운영자가 별도로 주입하고 개인 자격이나 비밀번호를 저장소에 하드코딩하지 않는다. 미완료·실행 불가 항목은 명시한다.
 
 설계 변경은 근거·영향을 ADR로 남긴다. 특히 ABR packager 변경, TURN 추가, 용량 목표 미달, OAuth 외부 설정 미완료는 숨기지 않고 완료 보고에 포함한다.
+
+## 로컬 구현 순서 예외 (2026-11-09)
+
+사용자는02 실제 휴대폰·외부망 인수가 보류된 상태에서04 로컬 구현부터 진행하도록 승인했다.01 인증·CRUD와 검증된 단일 품질 실험을 바탕으로 회차 제어→인증 WHIP/변환→Flutter 송출·익명 시청 순서로 구현한다. 실제 기기·외부망·VAAPI·ABR와 최종 인수 기준은 유지하며 로컬 자동 검사로 대체하지 않는다.

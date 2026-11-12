@@ -1,0 +1,42 @@
+logLevel: info
+logDestinations: [stdout]
+readTimeout: 5s
+writeTimeout: 5s
+
+authMethod: http
+authHTTPAddress: http://api:8080/internal/mediamtx/auth
+authHTTPExclude: []
+
+api: true
+apiAddress: :9997
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: false
+srt: false
+moq: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+hlsAlwaysRemux: false
+hlsAllowOrigins: ["https://localhost:19443"]
+
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :19391
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+webrtcAllowOrigins: ["https://localhost:19443"]
+webrtcSTUNGatherTimeout: 2s
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+pathDefaults:
+  overridePublisher: false
+paths:
+  "~^wbb/[0-9a-f-]+/[0-9]+/(source|720p)$":
+    source: publisher

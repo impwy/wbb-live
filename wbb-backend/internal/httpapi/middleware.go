@@ -19,6 +19,7 @@ type ctxKey int
 const (
 	ctxRequestID ctxKey = iota
 	ctxAuthUser
+	ctxAuthIdentity
 )
 
 func requestID(r *http.Request) string {
@@ -32,6 +33,13 @@ func requestID(r *http.Request) string {
 func authUser(r *http.Request) auth.User {
 	u, _ := r.Context().Value(ctxAuthUser).(auth.User)
 	return u
+}
+
+type authIdentity struct{ sessionID, familyID string }
+
+func identity(r *http.Request) authIdentity {
+	v, _ := r.Context().Value(ctxAuthIdentity).(authIdentity)
+	return v
 }
 
 var errOrigin = errors.New("origin not allowed")
@@ -99,7 +107,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			if r.Method == http.MethodOptions {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
 				w.Header().Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -123,7 +131,13 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeDomainError(w, r, err)
 			return
 		}
+		sid, fid, err := s.auth.AccessIdentity(token)
+		if err != nil {
+			writeDomainError(w, r, err)
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxAuthUser, user)
+		ctx = context.WithValue(ctx, ctxAuthIdentity, authIdentity{sessionID: sid, familyID: fid})
 		next(w, r.WithContext(ctx))
 	}
 }

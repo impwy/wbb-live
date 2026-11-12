@@ -1,0 +1,146 @@
+# WBB public stack for live.wombatburrow.com (docs: deploy/live/README.md).
+# Only the edge (loopback) and the WebRTC ICE port are published on the host.
+name: wbb-live
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wbb
+      POSTGRES_PASSWORD: ${WBB_DB_PASSWORD:?required}
+      POSTGRES_DB: wbb
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wbb -d wbb"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [private]
+    restart: unless-stopped
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [private]
+    restart: unless-stopped
+  api:
+    build:
+      context: ../../wbb-backend
+      dockerfile: Dockerfile.media
+      target: api
+    image: wbb-live-api:${WBB_IMAGE_TAG:-local}
+    environment:
+      WBB_ENV: prod
+      WBB_ADDR: :8080
+      WBB_DATABASE_URL: postgres://wbb:${WBB_DB_PASSWORD}@postgres:5432/wbb
+      WBB_REDIS_ADDR: redis:6379
+      WBB_JWT_SECRET: ${WBB_JWT_SECRET:?required}
+      WBB_CORS_ORIGINS: ${WBB_PUBLIC_ORIGIN:?required}
+      WBB_MEDIA_WHIP_URL: http://mediamtx:8889
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+      WBB_COMPLETION_URL: http://mediamtx:9998
+      WBB_COMPLETION_ROOT: ${WBB_COMPLETION_ROOT:?required}
+      WBB_COMPLETION_SLOT: ${WBB_COMPLETION_SLOT:?required}
+      WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?required}
+      WBB_EVAL_LOGIN_ENABLED: ${WBB_EVAL_LOGIN_ENABLED:-false}
+      WBB_EVAL_LOGIN_EMAIL: ${WBB_EVAL_LOGIN_EMAIL:-}
+      WBB_EVAL_LOGIN_PASSWORD: ${WBB_EVAL_LOGIN_PASSWORD:-}
+      # Optional Cloudflare TURN relay for publishers behind blocked ICE ports.
+      WBB_TURN_KEY_ID: ${WBB_TURN_KEY_ID:-}
+      WBB_TURN_API_TOKEN: ${WBB_TURN_API_TOKEN:-}
+      # Behind the proxies every client shares one RemoteAddr bucket, so the
+      # per-IP budgets are global budgets here (see README).
+      WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}
+      WBB_RATE_LIMIT_ACCOUNT_REQUESTS: ${WBB_RATE_LIMIT_ACCOUNT_REQUESTS:-20}
+      WBB_EVAL_LOGIN_IP_LIMIT: ${WBB_EVAL_LOGIN_IP_LIMIT:-60}
+      WBB_EVAL_LOGIN_ACCOUNT_LIMIT: ${WBB_EVAL_LOGIN_ACCOUNT_LIMIT:-30}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    networks: [private]
+    restart: unless-stopped
+  mediamtx:
+    build:
+      context: ../..
+      dockerfile: experiments/media-completion-integration/Dockerfile.mediamtx
+    image: wbb-live-mediamtx:${WBB_IMAGE_TAG:-local}
+    environment:
+      WBB_COMPLETION_ANCHOR: /live/anchor.json
+      WBB_COMPLETION_DIR: /live/state
+      WBB_COMPLETION_ADDRESS: 0.0.0.0:9998
+      WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?required}
+      # Hosts advertised as ICE candidates: public IP and/or LAN IP.
+      MTX_WEBRTCADDITIONALHOSTS: ${WBB_ICE_HOSTS:?required}
+      MTX_HLSALLOWORIGINS: ${WBB_PUBLIC_ORIGIN}
+      MTX_WEBRTCALLOWORIGINS: ${WBB_PUBLIC_ORIGIN}
+    volumes:
+      - ./anchor.json:/live/anchor.json:ro
+      - completion-state:/live/state
+      - ./mediamtx.yml:/live/mediamtx.yml:ro
+    command: ["/live/mediamtx.yml"]
+    ports:
+      # WebRTC ICE (UDP preferred, TCP fallback). Forward both on the router.
+      - "${WBB_ICE_PORT:-18391}:18391/udp"
+      - "${WBB_ICE_PORT:-18391}:18391/tcp"
+    depends_on:
+      api: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+  worker:
+    init: true
+    build:
+      context: ../../wbb-backend
+      dockerfile: Dockerfile.media
+      target: worker
+    image: wbb-live-worker:${WBB_IMAGE_TAG:-local}
+    environment:
+      WBB_DATABASE_URL: postgres://wbb:${WBB_DB_PASSWORD}@postgres:5432/wbb
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+      WBB_MEDIA_API_URL: http://mediamtx:9997
+      WBB_MEDIA_HLS_URL: http://mediamtx:8888
+      WBB_MEDIA_WHIP_URL: http://mediamtx:8889
+      WBB_MEDIA_RTSP_HOST: mediamtx:8554
+      WBB_MEDIA_LOCK_FILE: /run/wbb-worker/worker.lock
+      WBB_COMPLETION_URL: http://mediamtx:9998
+      WBB_COMPLETION_ROOT: ${WBB_COMPLETION_ROOT:?required}
+      WBB_COMPLETION_SLOT: ${WBB_COMPLETION_SLOT:?required}
+      WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?required}
+    volumes: [worker-lock:/run/wbb-worker]
+    depends_on:
+      api: {condition: service_healthy}
+      mediamtx: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+  edge:
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    volumes:
+      - ./Caddyfile.edge:/etc/caddy/Caddyfile:ro
+      - ${WBB_WEB_DIR:-./web}:/srv/www:ro
+      - edge-data:/data
+      - edge-config:/config
+    environment:
+      WBB_MEDIA_SECRET: ${WBB_MEDIA_SECRET:?required}
+    ports: ["127.0.0.1:${WBB_EDGE_PORT:-19480}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+      mediamtx: {condition: service_started}
+    networks: [private]
+    restart: unless-stopped
+networks:
+  private: {driver: bridge}
+volumes:
+  pg-data:
+  worker-lock:
+  edge-data:
+  edge-config:
+  completion-state:
+    external: true
+    name: wbb-live_completion-state

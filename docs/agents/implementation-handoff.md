@@ -1,0 +1,157 @@
+# 구현 담당 전환
+
+2026-11-08 사용자 승인: pi가 한도·오류로 구현을 계속할 수 없으면 지정 Codex 세션에 이관하고, pi 한도가 돌아오면 다시 pi로 실행한다. 정상 완료 후 리뷰를 기다리는 상태만으로 담당을 바꾸지 않는다.
+
+## 지정 세션과 현재 상태
+
+### 최신: 2026-11-12 Claude Code 단독 이어받기·공개 배포
+
+사용자가 Codex에서 진행하던 작업을 Claude Code(tmux `%0`)가 이어서 필수 요구사항 완료까지 개발하도록 지시했다. 대체 Codex `%12`는 사용자 stop 지시 후 대기(주간 한도 19%)이며 pi `%10`도 편집하지 않는다. 현재 단독 편집자는 Claude Code다. 사용자는 이후 추가 테스트 없이 개발을 진행하라고 지시했다.
+
+- 09-A1 평가 로그인 `f922149`: 대상 Go 테스트(config, httpapi Evaluation/Google/Login/Provider)를 일회용 PostgreSQL로 통과한 뒤 커밋했다.
+- `2f7cc3b`: 목록 `status=live`·`ownerId` 필터, 카드형 목록·방송 중 필터·자동 갱신·등록 버튼, 상세의 재생 영역·소유자 수정/삭제. `flutter analyze`만 실행했다(테스트 미실행).
+- `8dbd361` 및 후속: `deploy/live` Compose(`wbb-live`)를 Labtop에 배포했다. 호스트 Caddy에는 `conf.d/live.wombatburrow.caddy`만 추가해 보호 사본 validate 후 reload했고 기존 root 응답 308은 유지됐다. 외부 회선에서 신뢰 TLS·providers·평가 로그인 Origin 403·HLS 미인가 403을 확인했다. 평가 계정 비밀번호는 서버 `.env`(600)에만 있다.
+- 미완료: 공유기 ICE UDP/TCP 18391 전달(사용자 외출 중), 실제 PC·iPhone·외부망 송출 인수, 09-A2 회귀.
+
+
+### 최신: 2026-11-11 07-A2 제품 매트릭스 게시 준비·09-A 인계
+
+지정 pi `%10`은 마지막 실제 확인에서 429/1310이었으므로 지정 대체 Codex `%12`가 단독 구현자다. 07-A2 지원 범위의 제품 장벽 5종, A→B→C, capacity=2, 장기 관리 장애와 검증기 실패 정리를 구현했다. 조정자는 최종 이미지의 A 장벽 중 B 영상·두 음원 연속성, 60초 관리 장애, Python 4개·Node 2개 검사, 올바른 일회용 PostgreSQL의 전체 Go race·vet을 독립 확인했다. 제품·검증기 체크포인트는 `0738466`, Draft PR11은 `work/media-completion-spike`를 base로 한다. 대체 구현자는 제품·검증기 편집과 Docker 조작 중단을 명시했다.
+
+조정자의 첫 전체 Go 검사에는 관리자 URL 경로를 `/postgres`로 바꾸지 않은 오류가 있어 기존 전용 검증 DB를 사용했다. 이 실행은 제품 결함 근거에서 제외했고, 생성 시각·소유자를 확인한 테스트 자료만 백업 후 트랜잭션으로 정리했다. 기존 자료는 유지됐고 활성·미완료는 0이다. 올바른 일회용 DB의 단일 실패 테스트와 전체 Go race는 통과했다. 사용자 기기·외부망·실제 평가 로그인은 여전히 미완료다. 다음 단독 구현 범위는 `.scratch/wbb-live/issues/09a-official-required-acceptance.md`의 로컬 평가 로그인 및 최종 기능 회귀다. 새 구현 지시 전 현재 변경·검사 인계를 확인하고 두 구현자가 동시에 편집하지 않는다.
+
+### 최신: 2026-11-11 07-A2 로컬 검증·구현 동결
+
+지정 pi `%10`의 마지막 실제 응답은 429/1310이었고 구현 담당은 사용자가 지정한 대체 Codex `%12`다. 대체 구현자는 07-A2 제품 통합과 두 축 리뷰의 자연 종료·설정 검증 결함 수정을 마치고 **제품·검증기 편집과 Docker 조작 중단**을 명시했다. 조정자가 제품 `b5b0ff7`, 수정 `0096bd2`를 커밋하고, 전용 공개 HTTPS의 두 Chrome H264/두 음원/익명 HLS/완료 근거 뒤 ENDED와 자연 FFmpeg 종료의 전이 실패·종료 기록 실패 재시도를 독립 검증했다. 수정본 전체 Go race와 Flutter analyze·59개 테스트가 통과했다. 전용 스택은 활성 회차0·unresolved 작업0이며 helper8090도 정상이다. 이 기록은 실제 iPhone·외부망·평가 로그인의 인수가 아니다.
+
+07-A2의 제품 barrier 및 MediaMTX A→B→C 매트릭스와 구형 미완료 작업의 검증된 운영 복구 경로가 남는다. 리뷰·검증 문서 갱신 및 Draft PR 게시 후 지정 대체 구현자에게 다음 범위를 단독으로 인계한다. 동결 중 새 제품 편집이나 병렬 구현을 시작하지 않는다.
+
+### 최신: 2026-11-11 07-A2 제품 통합 인계
+
+07-A1 격리 패치·문서 `311abb6`을 [Draft PR10](https://github.com/impwy/wbb-live/pull/10)(base `work/outbox-delivery`)에 게시했다. 새 브랜치는 `work/media-completion-integration`, 시작 기준 `311abb6`이다. 지정 대체 Codex `%12`가 07-A1 파일·Docker 조작 중단을 명시한 뒤 조정자가 독립 검증·게시를 끝냈다. 같은 단독 구현자에게 `.scratch/wbb-live/issues/07a2-media-completion-integration.md`의 제품 API·DB·worker 종료 근거 통합을 지시했다. 먼저 tuple/evidence/HMAC/잠금/종료 게이트 설계를 보고하고 그 범위 내 구현을 이어간다. 기존 07-A1 전용 옛 이미지·볼륨과 helper8090을 보존하고 제품 통합 검증은 별도 전용 자원으로 격리한다. 현 시점 07-A2 제품 변경·검증 결과는 아직 없다.
+
+### 최신: 2026-11-11 07-A1 동결·독립 검증
+
+지정 pi `%10`은 마지막 실제 확인에서 429/1310이므로 구현 담당은 지정 대체 Codex `%12`다. 대체 구현자는 07-A1 패치 `99ea61f27051f593713c3832825c009bdda2f3ecb26f41ffc71565ed6b62156d`와 검증기 수정·자체 Linux 결과를 보고한 뒤 **실험·제품 파일 편집 및 Docker 조작 중단**을 명시했다. 조정자가 전용 자원을 인수해 clean patch/race, 새 이미지의 실제 두 방송 capacity=2, epoch/설정/손상, boundary 검증기 Node 7/7과 HTTP 경계를 독립 실행했다. 두 축 리뷰의 잔여 확정 결함은0건이며 ADR0001은 격리 계약으로 채택, 07-A1은 done으로 기록했다. 이는 제품 종료 정확성 완료가 아니다. 최신 제품은07-C `90921dc`/Draft PR9이고 다음 구현은07-A2로, 07-A1 문서·게시와 분기 인계 후 **같은 대체 세션 한 명**에게 시작시킨다. 07-A1 옛 전용 MediaMTX/auth는 활성0으로 보존, helper8090 HTTP200, 일회용 검사 자원은 정리됐다. 새 checksum 형식은 기존 실험 볼륨을 자동 승격하지 않으므로 제품 전환 시 새 전용 볼륨의 명시 bootstrap과 과거 작업 정책이 필요하다.
+
+### 최신: 2026-11-11 실험 검증 재개
+
+지정 pi의 상태 확인 실제 응답은429/1310(Weekly/Monthly Limit Exhausted, reset 2026-11-14 20:53:52 시간대 미표기)이었다. 지정 대체 Codex는 응답 가능, 편집·실행 중단 및 체크포인트 인계를 명시했다. 동일 세션·동일 모델을 유지해07-A1 실험영역 구현 재개를 지시했다. 조정자는 실제 작업 시작과 이후 한도 응답을 계속 확인한다.
+
+보존된patch ac005b02와HTTP독립검사 통과는 유효하다. 새verify-media.mjs는 아직 실행 전이며 B음성/영상연속성·epoch·A변환종료·cleanup검증 보완을 요청했다. 모든 기존WBB Docker스택은 재확인시22시간전 종료 상태였고helper8090은HTTP200이다. 기존제품스택을 일괄기동하지 않고 필요한07A1전용실험만 사용한다. 07-A2 초안은07A1전체검증·ADR채택 전 구현하지 않는다.
+
+### 최신: 07-A1 미디어 종료 계약 구현 인계
+
+07-C 제품90921dc를 Draft PR9(base work/mobile-camera)에게시했다. 조정자전체Go race·vet·DB재시작/TERM·Kafka중단제품미디어검사통과,제품해시동일,전용활성0/8090정상이다. PR9의backend/frontend CI모두통과를확인했다. 새work/media-completion-spike에서지정대체Codex에게07-A1 endpoint/schema·작업소유권·잠금수명·검증장벽의구체설계를먼저요청한다. endpoint/HMAC/작업소유권과불변bootstrap anchor검토를마쳤고같은세션에실험영역단독구현을지시했다. 기존스택교체나07-A전체완료가아니다.
+
+### 최신: 07-C 구현 동결·독립 검증 인계
+
+지정 대체 Codex가 work/outbox-delivery의 제품/테스트 편집과 자원 조작을 중단했다고 명시했다. 기준a78a059 이후 미커밋 구현이며 조정자가15파일해시를기록했다. 구현자 전체race·vet·build·Kafka장애미디어·DB재시작/TERM 검사는통과했다. 조정자 전체Go race도통과했고 실제프로세스/DB재시작 독립검증을이어간다. 기존미디어활성0(ended34),8090 HTTP200과Kafka healthy를확인했다. 구현자는새범위시작없이대기한다. 다음07-A1범위는 .scratch/wbb-live/issues/07a1-media-completion-spike.md이며07-C독립검증/게시후별도인계한다.
+
+### 최신: 07-C outbox 전달 구현 인계
+
+05-A 제품d762510을 [Draft PR8](https://github.com/impwy/wbb-live/pull/8)(base work/flutter-live)에 게시했다. 새work/outbox-delivery에서 지정 대체 Codex가07c-outbox-delivery.md를 단독 구현한다. 기존상태/outbox 원자저장 위에 Kafka 전달·재시도·운영 재처리를 연결한다. unknownPOST/인박스소비/실제기기 관문을 완료로 간주하지 않는다. 구현 전짧은 claim/ack/실패계약을보고하고 승인범위안에서진행한다. 기존8090와전용미디어스택을보존하고활성0확인후전용자원만사용한다. 조정자는독립리뷰/검증을담당한다.
+
+
+### 최신: 05-A 로컬 독립 검증 완료
+
+조정자가 정상 카메라와 합성 숨김 종료를 별도 Chrome 프로세스로 독립 검증했다. H264/Opus·익명 음성/영상·pause·playback409/HLS403·이전grant409·정확한ended·실제자원부재를 확인했다. 제품/검증기 해시는 인계 후 불변이며 전용활성0/기존8090 HTTP200이다. analyze0·전체58 후 추가publisher8·최종JS7·릴리스빌드도 통과했다. 지정 구현자는 편집 중단·대기이며 조정자가 문서와PR게시를 담당한다. 실제iPhone/외부망/Google/unknownPOST/ABR는 미완료다.
+
+
+### 최신: 05-A 구현 동결·독립 검증 인계
+
+지정 대체 Codex가 카메라·마이크 제품 구현과 자체 검사를 마치고 제품/전용스택 편집·기동을 중단했다고 명시했다. 조정자는 실제 대기 상태와 활성 회차0을 확인하고 독립검증 자원을 인수했다. work/mobile-camera, 기준17ec0c8 이후 작업트리이며 아직 커밋/게시 전이다. 자체Flutter59·JS7·분석·빌드와screen/camera/합성숨김통합을 보고했다. 조정자는 변경해시를 저장하고 독립Chrome 카메라검증을 시작했다. 구현자는 추가 편집 없이 대기한다. 실제iPhone/외부망/Google/unknownPOST/ABR는 미완료다.
+
+
+### 최신: 05-A 모바일 카메라 구현 인계
+
+PC 통합 제품9a91b3b와 문서426c158은 Draft PR7로 게시했다. 새work/mobile-camera에서 지정 대체 Codex가05-A 단일 품질 camera·mic을 단독 구현한다. 티켓 .scratch/wbb-live/issues/05a-mobile-single-rendition.md의 캡처·권한·수명·익명시청 계약을 따른다. 기존 인증 transport/송출 조정자를 재사용하며 source와 캡처를 일치시킨다. 기존8090과 전용스택을 보존하고 변경 전 활성회차를 확인한다. 조정자는 독립 리뷰·검증을 계속한다. 실제iPhone·외부망·Google·unknown POST관문은 미완료다. 새pi/모델/병렬제품구현자를 만들지 않는다.
+
+### 최신: 04-B2 독립 검증 완료·게시
+
+조정자가 동결 제품의 analyze0·Flutter53개·JS3개·릴리스 빌드와 두 Chrome 제품 UI를 독립 검증했다. H264/Opus·두 음원 수신·pause유지·정확한ended·이전HLS차단·실제자원부재를 확인했고 검증 중 파일 해시는 동일했다. 전용 활성0, 기존8090 HTTP200이다. 두 축 잔여 확정 결함0건이며 지정 구현자는 계속 편집 중단·대기다. 제품9a91b3b를 [Draft PR7](https://github.com/impwy/wbb-live/pull/7)(base work/local-secure-media)으로 게시했다. 다음05-A 단일 품질 카메라·마이크 구현을 인계한다. unknown POST 자동회수와 실제 기기/외부망은 미완료로 유지한다.
+
+### 최신: 04-B2 구현 중단·독립 검증 인계
+
+지정 대체 Codex가 work/flutter-live의 제품 코드와 전용 스택 편집을 중단하고 인계를 보고했다. 자체 analyze0·Flutter53개·JS3개·릴리스 빌드 및 두 Chrome 제품 UI 흐름을 통과했다고 보고했으며 조정자는 산출물을 확인하고 독립 재실행 중이다. 전용 활성 회차0에서 검증을 시작했다. 전용 Caddy/API/worker/MediaMTX/PostgreSQL/Redis는 유지하고 기존8090을 보존한다. Flutter overlay의 track gather6초는 H264 초기 전송 지연 대조 결과이며 원래04-B1 설정은 유지한다. 현재 조정자만 검증 자원을 사용하고 구현자는 대기한다. 검증 결과는 docs/verification/04b2-flutter-live.md, 리뷰는 docs/reviews/04b2-flutter-live.md에 기록한다. 커밋·게시·05-A 구현은 아직 시작하지 않았다.
+
+### 최신: 04-B2 Flutter 통합 시작
+
+서버 체크포인트107cdd8은 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)(base work/local-session-control)으로 게시했다. 조정자 SIGKILL·자동 재시작·새 시청자·blocking HLS 종료 독립 검증을 완료했고 전용 활성 회차0과 기존8090 HTTP200을 확인했다. 새 브랜치work/flutter-live에서 지정 대체 Codex가04-B2 Flutter PC 송출·익명 시청을 단독 구현한다. 티켓의04-B2 인터페이스·자원 소유·클릭 활성화·인증 만료·늦은 응답·재생 상태 계약을 따른다. 조정자는 리뷰와 독립 검증을 계속한다. unknown POST 자동회수와 실제기기/외부망 관문은 그대로 미완료다. 새pi/모델/구현자 추가는 없다.
+
+### 최신: 04-B1 독립 검증 완료, 04-B2 준비
+
+work/local-secure-media의 서버 인터페이스와 정상·권한 차단·종료·장애 경계를 검증했다. 지정 대체 Codex는 제품과 전용 스택을 동결하고 대기 중이다. 조정자의 전체 Go race/vet, Linux9개, 추가 응답 유실 fixture, 실제 worker SIGKILL·자동 재시작·새 시청자33프레임·최종자원부재, 실제 pending LL-HLS 요청 종료(약2.1초404)가 통과했다. 두 축 정적 잔여0건이다. `.scratch/wbb-live/issues/04b-local-secure-media.md`의04-B2 계약에 따라 Flutter PC 송출·익명 시청을 다음 구현으로 인계한다. 주소 없는 unknown POST 자동 회수는04-B/07에서 미완료로 유지하며 전체04-B 완료를 의미하지 않는다. 최신 리뷰·검증 문서는 docs/reviews/04b-local-secure-media.md와 docs/verification/04b-local-secure-media.md다. 기존8090/CPU서비스는 유지한다.
+
+### 최신: 04-B1 설계 승인·구현 재개
+
+04-A 게시 체크포인트는03ee70c, [Draft PR5](https://github.com/impwy/wbb-live/pull/5), base work/media-device-acceptance다. 새 브랜치work/local-secure-media에서 지정 대체 Codex에게04-B1 구체 설계 보고를 요청했다. 보고 대상은 미디어 worker 감독/재시작 회수, MediaMTX 인증과 Caddy HLS 인가, WHIP 중계·응답 유실 계약이다. 설계 검토와 독립 보완을 티켓에 반영했다. 해당 worker namespace의 프로세스 신원 검증, lease fencing, HLS 종료 경합 기준을 확정하고 지정 대체 Codex에게04-B1 구현 재개를 지시한다. 조정자는04-A 독립 검사·리뷰를 마쳤고 실제 기기/외부망 인수는 여전히 미완료다.
+
+### 최신: 04-A 검증 완료, 04-B 준비
+
+work/local-session-control에서04-A 로컬 회차 준비·취소·공개 상태를 구현하고 검증했다. 지정 대체 Codex가 단독 구현했으며 조정자 독립 Go race/vet, Flutter36개/analyze/build, 실제 API/DB 재시작과 Redis 장애를 포함한17개 검사를 통과했다. 두 축 리뷰에서 발견한4개 고유 결함을 수정했고 잔여 확정 결함0건이다. 다음 범위는 `04b-local-secure-media.md`의04-B1 인증된 미디어 제어와 단일 품질 처리다. 실제 기기/외부망 관문은 미완료이며 기존8090/CPU서비스는 유지한다.
+
+### 최신: 04 로컬 구현 승인
+
+2026-11-09 사용자가 로컬 구현부터 진행하도록 승인했다. 지연은 사용자 재시험에서 정상으로 보고됐으며 원인은 미확정이다. 지정 대체 Codex가04-A 회차 준비·취소부터 구현하고 조정자는 독립 리뷰한다. `.scratch/wbb-live/issues/04a-local-session-control.md`가 현재 범위다.02 실제 휴대폰·외부망·VAAPI 및03 ABR 인수는 미완료로 유지한다. 기존8090와 CPU 미디어 서비스는 보존한다.
+
+### 최신: 재생 준비·지연 UI 반영
+
+지정 대체 Codex는 편집을 중단하고 리뷰 대기 중이다. 준비 전 재생 비활성화, 상태 안내, 오류 재시도 및 라이브 이동을 구현했고 조정자가8090 helper에 반영했다. 독립 CPU83·fixture11·HTTP16·HTTPS미디어14·별도 송출/시청12 검사를 통과했다. 최신 범위는 `02-playback-readiness-latency` 티켓과 동명 리뷰·검증 문서를 따른다. 사용자 실제 캡처의 큰 지연은 미재현이므로 다음 작업은 새 화면에서 실제 지연값을 확인하는 것이다. 정상 대기를 실패로 보고 중복 구현하지 않는다. 외부 환경과 공유기 SSH 터널은 종료 상태이며 pi 한도 재확인 예약은 유지한다.
+
+### 2026-11-09 개발 재개
+
+- 게시 체크포인트: `3b4c6fd`, [Draft PR4](https://github.com/impwy/wbb-live/pull/4), base `work/google-login`. 구현 담당은 편집 중단/대기이며 조정자는 실제 기기 인수를 준비한다. GitHub 연결 도구의 PR 쓰기 권한 부족 후 기존 로컬 CLI로 게시했다.
+- 다음 작업: 사용자가 live A 레코드를 DNS only로 전환했고 공개 HTTPS/전용 CPU720p 미디어 환경을 적용했다. 공개 인증/Origin 경계8/8 통과. 서버 내부 ICE18391 정상, 다른 인터넷 회선에서는 미도달이다. 사용자 요청으로 SSH 터널을 통한 KT 공유기 관리 화면 접근 및 포트 전달 설정을 진행 중이며 관리 로그인은 사용자 직접 입력 대기다. 이후 아이폰 Chrome 실제 송출/시청/종료를 확인한다. 기존 사이트 전체 설정/allowlist는 유지한다.
+
+- 최신 상태: 현재 구현 담당은 지정 대체 Codex다. pi가 구현 중429/1310 `Weekly/Monthly Limit Exhausted`를 반환하고3회 재시도 후 종료했다. 응답의 reset은2026-11-14 20:53:52이며 시간대는 미표기다. 지정 대체 Codex의 인계 지시 수신과 실제 파일/변경 검토 시작을 확인했다. 시간만으로 복구를 추정하지 않는다.
+- 최신 코드 체크포인트: `work/media-device-acceptance`의 실기기 검증 환경은 지정 대체 Codex가 수정·검사를 마치고 편집 중단/리뷰 대기다. 두 축 리뷰 잔여 확정 결함0건, 조정자 독립 selftest20·HTTP16·직접 Chrome14검사와 FFmpeg 종료/기존 자원 보존 확인. 원래 CPU83 전체 재실행 및 실제 기기/외부망은 미완료다. 정상 대기를 실패로 보고 중복 구현하지 않는다.
+- 사용자가 실제 휴대폰·외부망 검증 진행을 요청했고 대상은 아이폰 Google Chrome이다. 공개 구성은 전체 운영 Caddy의 별도 보호 사본에서 adapt/validate 통과, 운영 적용은 아직 없다. Cloudflare live DNS 정보·변경 수단과 ICE 포트 전달/방화벽을 확인한 뒤 `docs/verification/02-device-external-plan.md`를 따른다. 실제 관측은 `docs/verification/02-device-acceptance.md`가 기준이다.
+- pi는 재시도 종료 후 입력 대기이며 더 이상 편집하지 않는다. 대체 Codex 단독 구현, 조정 Codex 독립 리뷰를 유지한다. 새 pi나 모델은 만들지 않았다.
+- pi 재확인은2026-11-15 21:00 KST에 한 번 예약했다. 시간대 미표기 reset을 보수적으로 지난 뒤 실제 응답만 확인한다. 로컬 일회성 예약 이름은 `wbb-pi-recheck-20261115-2100`이며 원래 조정 Codex pane의 신원·대기/빈 입력을 검사한다. 해당 터미널/호스트가 유지돼야 전송할 수 있다. 사용자 중지 시 cancel 표식으로 취소하고 작업을 멈춘다.
+
+#### 당일 최초 재개 경과
+
+- 사용자가 개발 재개와 실기기 테스트 가능을 알렸다. 지정 pi는 상태 확인만 요청받고 실제 정상 응답했다. 대체 Codex는 기존 편집 중단·대기를 유지한다.
+- 현재 작업 브랜치는 `work/media-device-acceptance`, 시작 기준은 `bc9d46c`다. 아래의23:45 기록은 이전 체크포인트다.
+- 다음 구현 범위는 `.scratch/wbb-live/issues/02-device-acceptance-environment.md`의 인증된 HTTPS 실기기 검증 환경이다. 부모02의 미완료 관문을 수행하기 위한 준비이며03/04를 우회하지 않는다. 운영 Caddy/DNS/방화벽 변경·외부 기동은 하지 않고 검토 가능한 설정안을 먼저 만든다.
+- 기본 구현 담당은 지정 pi다. 조정자가 티켓을 작성·독립 설계 검토했고 정상 응답 후 구현을 지시했다. 같은 세션의 문서 읽기·구현 설계 시작을 실제 확인했다. 현재 PC 수동 검증용 CPU서비스는 유지하고 독립 포트/프로젝트로만 자동 검사하도록 지시했다. 실제 Google 및 실제 기기·외부망 인수는 여전히 미완료다.
+
+### 이전 인수 기록
+
+- 기본 구현: AGENTS.md에 지정된 기존 pi 세션. 마지막 pane `%10`.
+- 대체 구현 Codex: `01a1b9eb-ab52-76c0-a413-ba3cb523ec9e`, 마지막 pane `%12`. 새 세션을 만들거나 기존 세션의 모델을 임의 변경하지 않는다.
+- 조정·설계·리뷰·독립 검증: 이 대화의 Codex. 대체 구현자와 같은 사람이 자기 변경의 독립 리뷰를 대신하지 않는다.
+- 현재 구현 담당: 지정 pi GLM, 인수 완료·대기. 2026-11-08 23:45 KST 정상 응답, 대체 Codex의 명시적 편집 중단·인계 가능 보고, pi의 체크포인트/문서 읽기와 “인수 완료, 추가 구현 없이 대기” 응답을 확인했다. 제품226fefd·문서958c6fe를 인수했으며 새 수정 사항이 없어 구현을 중복 시작하지 않았다. 대체 Codex는 편집 중단 상태다.
+- 현재 브랜치: `work/google-login`, 제품 체크포인트 `226fefd`. [Draft PR3](https://github.com/impwy/wbb-live/pull/3)는 `work/media-vaapi`를 base로 하며 backend/frontend CI가 통과했다. 23:45 재확인 전 git은 깨끗했고 제품 변경은 없었다. 운영 문서 커밋958c6fe만 원격보다 앞서 있었다.
+- VAAPI 후속: `0f9d8d0`, [Draft PR2](https://github.com/impwy/wbb-live/pull/2). 격리 GPU 자동검증은 통과했지만 부모02의 실제 기기·외부망 관문은 유지한다.
+- 티켓06: 최종 스냅샷 `f1ba363`의 독립HTTP·Flutter36개·두 축 리뷰·빌드를 통과했다. `docs/reviews/06-google-login.md`, `docs/verification/06-google-login.md`를 따른다. 실제 Google 자격 로그인 인수가 남아in-review이며 테스트 provider 성공으로 대체하지 않는다.
+- 23:45 KST 일회성 재확인은 완료했고 실제 정상 응답으로 복구를 확인했다. 추가 재확인 예약은 없다. 현재는 체크포인트 인수·남은 관문 확인 후 대기하며 실제 기기02와 사용자 설정 없이 후속 선행 조건을 우회하지 않는다.
+- 원본 문서·커밋·PR 관리는 조정자가 맡는다. 정상 완료 후 대기를 이유로 중복 구현을 시작하지 않는다.
+
+## pi에서 대체 Codex로
+
+1. pi의 실제 오류·세션·현재 작업을 확인한다. 단순 지연만으로 중단하지 않는다.
+2. git 상태·브랜치·변경 파일·실행 중인 자원·검사 결과·미해결 문제를 보존한다. 미완료 변경을 삭제하거나 이미 실행 중인 편집과 경쟁하지 않는다.
+3. 대체 세션이 이 작업을 수행할 수 있는 상태임을 확인한 뒤 AGENTS와 관련 티켓·리뷰·검증 문서를 전달한다.
+4. 대체 세션의 실제 작업 시작을 확인한다. 시작 전후 git 상태를 확인하고 현재 담당을 이 문서에 유지한다.
+
+## 대체 Codex에서 pi로
+
+1. 지정 pi에 **상태 확인만** 요청한다. 한도 해제 판단만 하고 파일 편집·명령 실행·자원 기동을 시작하지 않게 한다.
+2. pi가 정상 응답한 뒤 대체 Codex에 안전한 작업 경계에서 저장·검사 결과·잔여 작업·자원 목록을 보고하고 편집을 멈추도록 요청한다. 원자적 편집/테스트 중간에 임의로 강제 종료하지 않는다.
+3. 대체 세션의 편집 중단과 실제 git 상태를 확인한다. 필요한 체크포인트를 기록하고 pi에 정확한 변경·문서를 전달한다.
+4. pi의 실제 구현 시작을 확인한 뒤 담당 상태를 pi로 갱신한다. 그 전에는 두 구현자에게 동시에 수정 권한을 주지 않는다.
+5. pi가 계속 제한이면 대체 Codex 구현을 유지하고 다음 재확인을 한 번만 예약한다. 사용자 중지 요청 시 예약을 취소하고 두 구현자에게 중지를 전달한다.
+
+## 검토와 게시
+
+대체 Codex도 기존 티켓 범위·검증 관문·비밀 보호·기존 서비스 보존 원칙을 따른다. 현재 구현 담당은 코드·테스트를 수정하고 결과를 보고한다. 조정 Codex가 별도 리뷰·독립 검증·커밋/PR 관리를 수행한다. 검증되지 않은 실제 기기·외부망·VAAPI/ABR 관문을 완료로 처리하지 않는다. 구체적인 실행 결과가 이전 미검증 상태를 대체할 때만 문서를 갱신한다.
+
+## 사용자 로컬 테스트 전환
+
+사용자가 공유기 관리자 비밀번호를 기억하지 못해 로컬 테스트만 진행하기로 했다. 이번 외부 acceptance 프로젝트를 종료하고 live 전용 Caddy host를 비활성화한 뒤 전체 validate/reload했다. 기존 Caddy 파일은 보존했으며 공유기 관리 SSH 터널도 종료했다. 사용자가 변경한 live DNS only는 그대로 유지한다. 기존 Mac helper8090의 HTTP200과 CPU 미디어 컨테이너를 확인했다. 실제 휴대폰/외부망 인수는 보류하며 완료로 처리하지 않는다. 기본/대체 구현자는 대기 상태를 유지한다.
+
+## 재생 준비·지연 후속 구현
+
+사용자 로컬 테스트에서 변환 준비 전 manifest404를 관측했고 준비 후 별도 Chrome 재생 성공을 확인했다. 사용자가 준비 전 재생 버튼 비활성화와 큰 레이턴시 개선을 요청했다. `.scratch/wbb-live/issues/02-playback-readiness-latency.md`에 따라 지정 대체 Codex가 실제 작업을 시작했다. 현재 동일 브랜치에서 단독 구현 중이며 별도 loopback 합성 환경으로 기준 지연을 측정한다. 원래 helper8090/CPU서비스는 유지한다. 조정자의 사용자송출 관측 시점에는 이미 종료되어 지연값을 얻지 못했으므로 원인을 단정하지 않는다.

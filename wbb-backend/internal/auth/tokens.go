@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -13,7 +14,7 @@ import (
 // as a publish grant and vice versa.
 const (
 	AudienceAPI     = "wbb-api"
-	AudiencePublish = "wbb-publish" // used by the media/WHIP step, not issued yet
+	AudiencePublish = "wbb-publish"
 	issuer          = "wbb"
 )
 
@@ -21,12 +22,24 @@ var (
 	ErrTokenInvalid = errors.New("token is invalid or expired")
 )
 
+var claimUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // AccessClaims is the login access JWT payload. sid/fid reference the active
 // auth_sessions row and its refresh family; sub is the user id.
 type AccessClaims struct {
 	jwt.RegisteredClaims
 	SessionID string `json:"sid"`
 	FamilyID  string `json:"fid"`
+}
+
+// PublishClaims are deliberately distinct from login claims. 04-A issues
+// grants for a prepared session; no media endpoint consumes them yet.
+type PublishClaims struct {
+	jwt.RegisteredClaims
+	BroadcastID string `json:"bid"`
+	SessionID   string `json:"bsid"`
+	FamilyID    string `json:"fid"`
+	Generation  int64  `json:"generation"`
 }
 
 // TokenManager signs and verifies access JWTs with a fixed algorithm
@@ -83,6 +96,44 @@ func (m *TokenManager) VerifyAccess(token string) (*AccessClaims, error) {
 	}
 	claims, ok := parsed.Claims.(*AccessClaims)
 	if !ok || claims.Subject == "" || claims.SessionID == "" || claims.FamilyID == "" {
+		return nil, ErrTokenInvalid
+	}
+	return claims, nil
+}
+
+// IssuePublish signs fixed database claims. Reissuing the same jti and times
+// during an idempotent replay cannot extend the grant's lifetime.
+func (m *TokenManager) IssuePublish(userID, broadcastID, sessionID, familyID, jti string, generation int64, issuedAt, expiresAt time.Time) (string, error) {
+	claims := PublishClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject: userID, Issuer: issuer,
+			Audience:  jwt.ClaimStrings{AudiencePublish},
+			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ExpiresAt: jwt.NewNumericDate(expiresAt), ID: jti,
+		},
+		BroadcastID: broadcastID, SessionID: sessionID,
+		FamilyID: familyID, Generation: generation,
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
+}
+
+// VerifyPublish accepts only the short-lived, single-purpose publish
+// audience. Database state is checked separately before an upstream create.
+func (m *TokenManager) VerifyPublish(token string) (*PublishClaims, error) {
+	parsed, err := jwt.ParseWithClaims(token, &PublishClaims{},
+		func(t *jwt.Token) (any, error) {
+			if t.Method != jwt.SigningMethodHS256 {
+				return nil, ErrTokenInvalid
+			}
+			return m.secret, nil
+		},
+		jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(issuer),
+		jwt.WithAudience(AudiencePublish), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
+	if err != nil || !parsed.Valid {
+		return nil, ErrTokenInvalid
+	}
+	claims, ok := parsed.Claims.(*PublishClaims)
+	if !ok || claims.IssuedAt == nil || claims.ExpiresAt == nil || !claimUUID.MatchString(claims.Subject) || !claimUUID.MatchString(claims.BroadcastID) || !claimUUID.MatchString(claims.SessionID) || !claimUUID.MatchString(claims.FamilyID) || !claimUUID.MatchString(claims.ID) || claims.Generation < 1 {
 		return nil, ErrTokenInvalid
 	}
 	return claims, nil

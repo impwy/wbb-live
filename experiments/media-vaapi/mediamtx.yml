@@ -1,0 +1,55 @@
+# MediaMTX 1.21.3 spike configuration (only deviations from defaults).
+# Paths reuse the CPU experiment's names (spike/source, spike/720p) so the
+# existing web helper works unchanged through SSH local port forwards.
+
+logLevel: info
+logDestinations: [stdout]
+
+api: true
+apiAddress: :9990
+
+rtsp: true
+rtspAddress: :8554
+
+rtmp: false
+srt: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+hlsAllowOrigins: ["http://127.0.0.1:8090", "http://localhost:8090"]
+
+webrtc: true
+webrtcAddress: :8889
+# TCP-only ICE: UDP cannot traverse an SSH -L forward, and we must not
+# pretend otherwise. Same port number inside and outside the container so
+# the advertised 127.0.0.1:18390 candidate is reachable via the tunnel.
+webrtcLocalUDPAddress: ""
+webrtcLocalTCPAddress: :18390
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+webrtcAllowOrigins: ["http://127.0.0.1:8090", "http://localhost:8090"]
+
+# Local spike auth (loopback-only publishes; see compose file).
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: playback
+        path:
+      - action: api
+      - action: metrics
+
+paths:
+  spike/source:
+    source: publisher
+  spike/720p:
+    source: publisher

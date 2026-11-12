@@ -1,0 +1,13 @@
+# WBB VAAPI spike transcoder image.
+# Pinned base (alpine:3.24 @ sha256:3f4d6b32...) + apk packages recorded by
+# preflight.sh (ffmpeg 8.1.3-r0, intel-media-driver 26.2.1-r0, libva 2.23.0-r0).
+# GPU encode only: no CPU fallback in transcode-vaapi.sh.
+# The stock bluenviron/mediamtx:1.21.3-ffmpeg ships h264_vaapi compiled in
+# but WITHOUT any libva driver in /usr/lib/dri, hence this derivative is
+# required (checked on 2026-11-08).
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
+
+RUN apk add --no-cache ffmpeg intel-media-driver libva-utils
+
+# vainfo + ffmpeg -encoders are the first-line GPU diagnostics.
+ENTRYPOINT ["/bin/sh"]

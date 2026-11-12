@@ -281,7 +281,7 @@ func TestBroadcastPagination(t *testing.T) {
 		t.Fatalf("capped limit: %d", r.status)
 	}
 
-	// live filter is honestly empty until media sessions exist.
+	// No session in this test is live, so the live filter is empty.
 	r = do(t, client, "GET", ts.URL+"/api/v1/broadcasts?status=live", nil, "")
 	if r.status != http.StatusOK || len(r.body["items"].([]any)) != 0 {
 		t.Fatalf("live filter: %d %v", r.status, r.body["items"])

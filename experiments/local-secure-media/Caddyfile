@@ -1,0 +1,36 @@
+{
+    admin off
+    default_sni localhost
+    skip_install_trust
+}
+
+https://localhost:19443 {
+    tls internal
+    route {
+        request_header -X-WBB-Media-Secret
+        request_header -X-WBB-Original-URI
+
+        @media path /media/*
+        header @media Cache-Control no-store
+        forward_auth @media api:8080 {
+            uri /internal/hls-authorize
+            header_up X-WBB-Media-Secret {$WBB_MEDIA_SECRET}
+            header_up X-WBB-Original-URI {uri}
+        }
+        handle_path /media/* {
+            reverse_proxy mediamtx:8888 {
+                header_up -Authorization
+                header_up -Cookie
+                header_down Location ^/(.*) /media/$1
+                transport http {
+                    response_header_timeout 30s
+                }
+            }
+        }
+        handle /api/v1/* {
+            reverse_proxy api:8080
+        }
+        respond / "WBB isolated media test origin" 200
+        respond 404
+    }
+}

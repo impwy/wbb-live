@@ -1,0 +1,11 @@
+# Host Caddy site for the WBB stack. TLS terminates here; everything else is
+# served by the wbb-live edge on loopback. Add via the existing conf.d import.
+live.wombatburrow.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:19480 {
+        flush_interval -1
+        transport http {
+            response_header_timeout 35s
+        }
+    }
+}

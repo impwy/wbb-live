@@ -4,10 +4,10 @@ import 'package:provider/provider.dart';
 import '../api/wbb_api.dart';
 import '../models/broadcast.dart';
 import 'broadcast_form_screen.dart';
+import 'broadcast_detail_screen.dart';
 
 /// The signed-in broadcaster's own broadcasts: create, edit, delete.
-/// The API has no owner filter yet, so pages are walked and filtered by
-/// ownerId client-side (noted as a contract gap for Codex).
+/// Pages are fetched with the server-side owner filter.
 class MyBroadcastsScreen extends StatefulWidget {
   const MyBroadcastsScreen({super.key});
 
@@ -37,8 +37,12 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
       final mine = <Broadcast>[];
       var cursor = '';
       while (true) {
-        final page = await api.listBroadcasts(cursor: cursor.isEmpty ? null : cursor);
-        mine.addAll(page.items.where((b) => b.ownerId == myUserId));
+        final page = await api.listBroadcasts(
+          cursor: cursor.isEmpty ? null : cursor,
+          limit: 50,
+          ownerId: myUserId,
+        );
+        mine.addAll(page.items);
         if (page.nextCursor.isEmpty) break;
         cursor = page.nextCursor;
       }
@@ -120,6 +124,12 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
                         final b = _mine[index];
                         return ListTile(
                           title: Text(b.title),
+                          onTap: () async {
+                            await Navigator.of(context).push<void>(
+                              MaterialPageRoute<void>(builder: (_) => BroadcastDetailScreen(broadcastId: b.id)),
+                            );
+                            if (mounted) _load();
+                          },
                           subtitle: Text(
                             '${_statusLabel(b.status)} · 수정 ${_formatDate(b.updatedAt)}',
                           ),
@@ -152,6 +162,8 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
 
   String _statusLabel(String status) => switch (status) {
         'live' => '방송 중',
+        'starting' => '준비 중',
+        'stopping' => '종료 처리 중',
         'ended' => '종료',
         _ => '대기',
       };

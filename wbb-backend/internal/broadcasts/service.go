@@ -8,15 +8,15 @@
 //   - Deletes are soft; deleted broadcasts disappear from public reads.
 //   - Title 1..100 chars, description 0..2000 chars.
 //
-// The status field is derived from broadcast_sessions once media sessions
-// exist; until then every broadcast reports status "ready" with a null
-// currentSessionId.
+// The status field is the state of the latest broadcast session, or "ready"
+// with a null currentSessionId when the broadcast never started.
 package broadcasts
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,6 +31,7 @@ var (
 	ErrForbidden = errors.New("not the broadcast owner")
 	// ErrVersionConflict reports a stale version on update/delete.
 	ErrVersionConflict = errors.New("version conflict")
+	ErrActiveSession   = errors.New("broadcast has an active session")
 )
 
 // InvalidInputError reports a request validation failure for one field.
@@ -50,6 +51,8 @@ const (
 	defaultLimit = 20
 	maxLimit     = 50
 )
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Owner is the public owner summary embedded in broadcast objects.
 type Owner struct {
@@ -120,24 +123,25 @@ func (s *Service) Create(ctx context.Context, ownerID, title, description string
 func (s *Service) Get(ctx context.Context, id string) (Broadcast, error) {
 	return s.queryOne(ctx,
 		`SELECT b.id, b.owner_id, b.title, b.description, b.version, b.created_at, b.updated_at,
-		        u.id, u.display_name
+		        u.id, u.display_name, COALESCE(latest.state, 'ready'), latest.id::text
 		 FROM broadcasts b JOIN users u ON u.id = b.owner_id
+		 LEFT JOIN LATERAL (SELECT id,state FROM broadcast_sessions WHERE broadcast_id=b.id ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
 		 WHERE b.id = $1 AND b.deleted_at IS NULL`,
 		id,
 	)
 }
 
+// ListFilter narrows the public list. Status "live" keeps broadcasts whose
+// latest session is publicly playable; OwnerID keeps one owner's broadcasts.
+type ListFilter struct {
+	Status  string
+	OwnerID string
+}
+
 // List returns non-deleted broadcasts newest-first with an opaque cursor.
-// statusFilter "live" currently returns no rows because live sessions are not
-// implemented yet; it is wired through so the contract stays stable.
-func (s *Service) List(ctx context.Context, statusFilter, cursor string, limit int) ([]Broadcast, string, error) {
-	if statusFilter != "" && statusFilter != "all" && statusFilter != "live" {
+func (s *Service) List(ctx context.Context, filter ListFilter, cursor string, limit int) ([]Broadcast, string, error) {
+	if filter.Status != "" && filter.Status != "all" && filter.Status != "live" {
 		return nil, "", &InvalidInputError{Field: "status", Reason: "must be \"live\" or \"all\""}
-	}
-	if statusFilter == "live" {
-		// No broadcast_sessions exist yet; live is honestly empty until the
-		// media step lands.
-		return []Broadcast{}, "", nil
 	}
 	if limit < 1 {
 		limit = defaultLimit
@@ -148,20 +152,31 @@ func (s *Service) List(ctx context.Context, statusFilter, cursor string, limit i
 
 	args := []any{}
 	where := "b.deleted_at IS NULL"
+	if filter.Status == "live" {
+		where += " AND latest.state = 'live'"
+	}
+	if filter.OwnerID != "" {
+		if !uuidPattern.MatchString(filter.OwnerID) {
+			return nil, "", &InvalidInputError{Field: "ownerId", Reason: "invalid"}
+		}
+		args = append(args, filter.OwnerID)
+		where += fmt.Sprintf(" AND b.owner_id = $%d", len(args))
+	}
 	if cursor != "" {
 		createdAt, id, err := decodeCursor(cursor)
 		if err != nil {
 			return nil, "", &InvalidInputError{Field: "cursor", Reason: "invalid"}
 		}
 		args = append(args, createdAt, id)
-		where += " AND (b.created_at, b.id) < ($1, $2)"
+		where += fmt.Sprintf(" AND (b.created_at, b.id) < ($%d, $%d)", len(args)-1, len(args))
 	}
 	args = append(args, limit+1)
 
 	rows, err := s.db.Query(ctx, `
 		SELECT b.id, b.owner_id, b.title, b.description, b.version, b.created_at, b.updated_at,
-		       u.id, u.display_name
+		       u.id, u.display_name, COALESCE(latest.state, 'ready'), latest.id::text
 		FROM broadcasts b JOIN users u ON u.id = b.owner_id
+		LEFT JOIN LATERAL (SELECT id,state FROM broadcast_sessions WHERE broadcast_id=b.id ORDER BY created_at DESC,id DESC LIMIT 1) latest ON true
 		WHERE `+where+`
 		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -238,10 +253,34 @@ func (s *Service) Update(ctx context.Context, actorID, id string, version int64,
 // Delete soft-deletes a broadcast as the owner. version must match. Once
 // media sessions exist, an active session will block deletion with 409.
 func (s *Service) Delete(ctx context.Context, actorID, id string, version int64) error {
-	if err := s.checkOwner(ctx, actorID, id, &version); err != nil {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	ct, err := s.db.Exec(ctx,
+	defer tx.Rollback(ctx)
+	var owner string
+	var storedVersion int64
+	err = tx.QueryRow(ctx, `SELECT owner_id::text,version FROM broadcasts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&owner, &storedVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if owner != actorID {
+		return ErrForbidden
+	}
+	if storedVersion != version {
+		return ErrVersionConflict
+	}
+	var active bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM broadcast_sessions WHERE broadcast_id=$1 AND state IN ('starting','live','stopping'))`, id).Scan(&active); err != nil {
+		return err
+	}
+	if active {
+		return ErrActiveSession
+	}
+	ct, err := tx.Exec(ctx,
 		`UPDATE broadcasts SET deleted_at = now(), version = version + 1, updated_at = now()
 		 WHERE id = $1 AND version = $2 AND deleted_at IS NULL`,
 		id, version,
@@ -252,7 +291,7 @@ func (s *Service) Delete(ctx context.Context, actorID, id string, version int64)
 	if ct.RowsAffected() != 1 {
 		return ErrVersionConflict
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) checkOwner(ctx context.Context, actorID, id string, version *int64) error {
@@ -294,7 +333,7 @@ func scanBroadcast(row rowScanner) (Broadcast, error) {
 	b.Status = StatusReady
 	err := row.Scan(
 		&b.ID, &b.OwnerID, &b.Title, &b.Description, &b.Version, &b.CreatedAt, &b.UpdatedAt,
-		&b.Owner.ID, &b.Owner.DisplayName,
+		&b.Owner.ID, &b.Owner.DisplayName, &b.Status, &b.CurrentSessionID,
 	)
 	b.OwnerID = b.Owner.ID
 	return b, err

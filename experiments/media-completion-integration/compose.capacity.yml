@@ -1,0 +1,14 @@
+# Disposable product capacity matrix. Uses a fresh anchor, state volume and
+# database supplied by a private generated env file; never mounts the base
+# completion history volume at /integration/state.
+services:
+  mediamtx:
+    environment:
+      WBB_COMPLETION_BARRIERS: "1"
+      WBB_COMPLETION_TEST_CAPACITY: "2"
+    volumes:
+      - capacity-state:/integration/state
+volumes:
+  capacity-state:
+    external: true
+    name: ${WBB_CAPACITY_VOLUME:?required}

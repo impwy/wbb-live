@@ -60,6 +60,7 @@ func main() {
 	authSvc := auth.NewService(pool, rdb, auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL), cfg.RefreshTokenTTL)
 	bcastSvc := broadcasts.NewService(pool)
 	srv := httpapi.NewServer(cfg, authSvc, bcastSvc, rdb, pool, log)
+	go srv.RunMaintenance(ctx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

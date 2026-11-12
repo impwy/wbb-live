@@ -17,6 +17,7 @@ import (
 
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
+	"github.com/impwy/wbb-live/wbb-backend/internal/chat"
 	"github.com/impwy/wbb-live/wbb-backend/internal/comments"
 	"github.com/impwy/wbb-live/wbb-backend/internal/config"
 	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
@@ -42,6 +43,7 @@ type Server struct {
 	comments     *comments.Service
 	donations    *donations.Service
 	recordings   *recordings.Service
+	chat         *chat.Service
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
 	// production uses time.Now.
@@ -60,7 +62,7 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if cfg.MediaCompletionURL != "" {
 		completion, _ = mediacompletion.NewClient(cfg.MediaCompletionURL, cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), turnClient: &http.Client{Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, completion: completion, comments: comments.NewService(dbPool), donations: newDonations(cfg, dbPool), recordings: recordings.NewService(dbPool, cfg.RecordingsDir)}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), turnClient: &http.Client{Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, completion: completion, comments: comments.NewService(dbPool), donations: newDonations(cfg, dbPool), recordings: recordings.NewService(dbPool, cfg.RecordingsDir), chat: chat.NewService(rdb)}
 }
 
 // RunMaintenance reconciles durable preparation timeouts independently of
@@ -114,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions", s.requireAuth(requireOrigin(s, s.handleStartSession)))
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}/sessions/current", s.handleCurrentSession)
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}/playback", s.handlePlayback)
+	mux.HandleFunc("GET /api/v1/broadcasts/{id}/chat/stream", s.handleChatStream)
+	mux.HandleFunc("POST /api/v1/broadcasts/{id}/chat", s.requireAuth(requireOrigin(s, s.handleSendChat)))
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}/comments", s.handleListComments)
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/comments", s.requireAuth(requireOrigin(s, s.handleCreateComment)))
 	mux.HandleFunc("PATCH /api/v1/comments/{cid}", s.requireAuth(requireOrigin(s, s.handleUpdateComment)))

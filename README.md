@@ -58,10 +58,28 @@
 
 방송 정보·회차·종료 상태는 PostgreSQL에 저장됩니다. API·DB 컨테이너를 재시작해도 목록·상세·종료 상태가 그대로 조회됩니다.
 
+### 선택 기능: 댓글 (COMMENT-01·02)
+
+1. 방송 상세 화면 아래 **댓글**에서 로그인한 사용자가 댓글을 작성합니다. 목록은 로그인 없이 볼 수 있고 5초마다 갱신됩니다.
+2. 내 댓글의 ⋮ 메뉴로 **수정·삭제**합니다. 다른 사람 댓글에는 메뉴가 없으며, 서버도 작성자가 아니면 `403`으로 거절합니다(`PATCH/DELETE /api/v1/comments/{id}`).
+
+### 선택 기능: 도네이션 (DONATION-01~03)
+
+1. 방송 상세 화면의 **후원하기**에서 금액(1,000~1,000,000원)과 메시지를 고르면, 서버가 후원 대상(방송 소유자)과 금액을 고정한 주문을 만들고 토스페이먼츠 **테스트 결제창**이 열립니다. 실제 금액은 청구되지 않습니다.
+2. 결제 후 돌아오면 서버가 저장된 주문 금액·대상·후원자와 결제사 승인 결과(`DONE`, 금액, 주문번호)를 대조한 뒤에만 후원을 확정합니다.
+3. 같은 승인 통지가 다시 와도(새로고침, 웹훅 재전송) 주문 단위로 한 번만 적립합니다. 웹훅은 본문을 믿지 않고 결제사에서 다시 조회합니다.
+4. 방송 상세에 방송별 후원 내역과 합계가 표시됩니다. 서버에 테스트 키(`WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY`, `test_` 접두사만 허용)를 설정해야 버튼이 나타납니다.
+
+### 선택 기능: 녹화·다시보기 (VOD-01~03)
+
+1. 방송하면 서버의 720p 변환기가 라이브 송출과 동시에 같은 영상을 MP4로 저장합니다(저장 실패가 라이브를 끊지 않음).
+2. 방송이 끝나면 서버가 녹화 정보(방송·회차·저장 위치·크기·시작 시각·길이)를 PostgreSQL에 등록합니다. 재시작 후에도 조회됩니다.
+3. 홈의 **다시보기** 필터에서 녹화 목록을, 방송 상세의 **다시보기** 목록에서 해당 방송의 녹화를 열어 재생합니다(`GET /api/v1/recordings`, `/api/v1/recordings/{id}/media`, Range 지원).
+
 ## 현재 공개 환경의 제약
 
 - **외부망(다른 회선)에서의 송출**은 서버의 WebRTC ICE 포트(UDP/TCP 18391)로 직접 연결하거나, 포트가 막힌 경우 Cloudflare TURN 중계를 거칩니다. 중계 시 지연이 약간 늘 수 있습니다. 시청·로그인·방송 관리는 HTTPS만 사용합니다. 현재 상태는 아래 "공개 배포 상태"에 기록합니다.
-- 화질은 단일 720p(H.264)입니다. 다중 화질(ABR)·댓글·도네이션·녹화는 구현하지 않았습니다(선택 요구사항).
+- 화질은 단일 720p(H.264)입니다. 다중 화질(ABR)은 구현하지 않았습니다.
 - 프록시 뒤에서는 클라이언트 IP별이 아닌 전체 공용 요청 한도로 동작합니다.
 
 ### 공개 배포 상태
@@ -135,6 +153,8 @@ make ci               # vet, test, flutter analyze/test/build
 | `WBB_EVAL_LOGIN_ENABLED/EMAIL/PASSWORD` | 평가용 바로 로그인 (세 값 모두 설정 또는 모두 미설정) |
 | `WBB_GOOGLE_CLIENT_ID/SECRET/CALLBACK_URI` | Google 로그인(선택, 세 값 모두 필요) |
 | `WBB_ICE_HOSTS`, `WBB_ICE_PORT` | 브라우저에 알릴 WebRTC 후보 주소와 포트 (deploy/live) |
+| `WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY` | 선택. 도네이션용 토스페이먼츠 테스트 키(`test_` 접두사만 허용). 미설정 시 후원 기능 숨김 |
+| `WBB_RECORDINGS_DIR` | 선택. 녹화 저장 경로(worker 쓰기, API 읽기 전용). 미설정 시 녹화·다시보기 비활성 |
 | `WBB_TURN_KEY_ID`, `WBB_TURN_API_TOKEN` | 선택. Cloudflare TURN 키. 설정하면 방송자 브라우저가 단기 TURN 자격(`GET /api/v1/media/ice-servers`, 로그인 필요)으로 미디어를 중계해, ICE 포트를 열 수 없는 환경에서도 송출됩니다 |
 
 예시 값은 `deploy/live/env.example`, `.env.example`에 자리표시자로만 있습니다. 실제 비밀값은 저장소에 넣지 않습니다.
@@ -181,6 +201,16 @@ media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결
 | GET `/broadcasts/{id}/sessions/current` | 공개 | 현재/최근 회차 또는 null; 민감 정보 제외 |
 | POST `/broadcasts/{id}/sessions/{sid}/stop` | 소유자 |202 종료 처리, 이미 종료면200 |
 | POST `/broadcasts/{id}/sessions/{sid}/publish-grants` | 원래 로그인 family의 소유자 | 조건을 만족하는 준비 회차의 만료 grant 갱신 |
+| GET `/broadcasts/{id}/comments` | 공개 | 최근 댓글(오래된 순) |
+| POST `/broadcasts/{id}/comments` | 로그인 | `{body}` 1~500자 |
+| PATCH·DELETE `/comments/{id}` | 작성자 | 다른 사용자 403 |
+| GET `/payments/config` | 공개 | `{enabled, clientKey}` (테스트 키만) |
+| POST `/broadcasts/{id}/donations` | 로그인 | 주문 생성 `{amount, message}` → `{order}` |
+| POST `/donations/confirm` | 주문한 후원자 | 결제사 승인·금액·대상 검증 후 확정, 반복 호출 시 중복 적립 없음 |
+| POST `/payments/webhook` | 결제사 | 결제사 재조회 후 멱등 확정 |
+| GET `/broadcasts/{id}/donations` | 공개 | 확정 내역·합계 |
+| GET `/recordings`, `/recordings/{id}`, `/broadcasts/{id}/recordings` | 공개 | 다시보기 목록·상세 |
+| GET `/recordings/{id}/media` | 공개 | MP4 (Range) |
 | GET `/health/live`, `/health/ready` | 공개/내부 | 프로세스 생존 / DB·마이그레이션 준비 |
 
 오류 형식: `{"error":{"code","message","requestId"}}`. 인증 세션의 최종 원장은 PostgreSQL `auth_session_families`/`auth_sessions`이며 Redis는 캐시일 뿐(장애 시 보호 API 503 fail-closed, 누락 시 원장으로 자가 복구).

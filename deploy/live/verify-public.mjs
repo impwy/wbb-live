@@ -130,7 +130,24 @@ try {
   const after = await view.evaluate(async id => (await fetch(`/api/v1/broadcasts/${id}/playback`)).status, started.broadcastId);
   log('ended', { endReason: ended.endReason, playbackAfterEnd: after });
 
-  const cleanup = await pub.evaluate(async () => {
+  // Replay (optional feature): the server registers the recording of the
+  // ended session within its scan interval; fetch the first bytes by id.
+  const replay = await view.evaluate(async id => {
+    for (let i = 0; i < 40; i++) {
+      const list = await (await fetch(`/api/v1/broadcasts/${id}/recordings`)).json();
+      if (list.items?.length) {
+        const r = list.items[0];
+        const media = await fetch(`/api/v1/recordings/${r.id}/media`, { headers: { Range: 'bytes=0-1023' } });
+        return { recordings: list.items.length, durationSeconds: r.durationSeconds, mediaStatus: media.status, contentType: media.headers.get('content-type') };
+      }
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    return { recordings: 0 };
+  }, started.broadcastId);
+  log('replay', replay);
+
+  // KEEP=1 leaves the check broadcast for manual inspection.
+  const cleanup = process.env.KEEP === '1' ? 'kept' : await pub.evaluate(async () => {
     const c = window.__ctl;
     const b = await (await fetch(`/api/v1/broadcasts/${c.broadcastId}`)).json();
     return (await fetch(`/api/v1/broadcasts/${c.broadcastId}?version=${b.broadcast.version}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + c.token } })).status;

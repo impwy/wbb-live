@@ -176,6 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
     final signedIn = auth.status == AuthStatus.authenticated;
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
@@ -190,13 +191,20 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           if (auth.status != AuthStatus.unknown)
             Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton.tonalIcon(
-                key: const Key('home-create'),
-                onPressed: _create,
-                icon: const Icon(Icons.videocam, size: 18),
-                label: const Text('방송하기'),
-              ),
+              padding: const EdgeInsets.only(right: 4),
+              child: compact
+                  ? IconButton(
+                      key: const Key('home-create'),
+                      tooltip: '방송하기',
+                      onPressed: _create,
+                      icon: const Icon(Icons.videocam),
+                    )
+                  : FilledButton.tonalIcon(
+                      key: const Key('home-create'),
+                      onPressed: _create,
+                      icon: const Icon(Icons.videocam, size: 18),
+                      label: const Text('방송하기'),
+                    ),
             ),
           if (signedIn) ...[
             IconButton(
@@ -222,8 +230,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     name: auth.user?.displayName ?? '',
                     size: 28,
                   ),
-                  const SizedBox(width: 6),
-                  Text(auth.user?.displayName ?? ''),
+                  if (!compact) ...[
+                    const SizedBox(width: 6),
+                    Text(auth.user?.displayName ?? ''),
+                  ],
                 ],
               ),
             ),
@@ -235,13 +245,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 4),
           ] else if (auth.status == AuthStatus.unauthenticated) ...[
-            TextButton(
-              key: const Key('home-signup'),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const SignupScreen()),
+            if (!compact)
+              TextButton(
+                key: const Key('home-signup'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const SignupScreen()),
+                ),
+                child: const Text('회원가입'),
               ),
-              child: const Text('회원가입'),
-            ),
             Padding(
               padding: const EdgeInsets.only(right: 12, left: 4),
               child: FilledButton(
@@ -414,16 +425,25 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
+  /// Card grid whose row height fits a 16:9 thumbnail plus the info rows.
   Widget _grid(List<Widget> cards) => SliverPadding(
     padding: const EdgeInsets.symmetric(horizontal: 20),
-    sliver: SliverGrid(
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 360,
-        mainAxisSpacing: 20,
-        crossAxisSpacing: 16,
-        childAspectRatio: 1.18,
-      ),
-      delegate: SliverChildListDelegate(cards),
+    sliver: SliverLayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 16.0;
+        final width = constraints.crossAxisExtent;
+        final columns = (width / 360).ceil().clamp(1, 6);
+        final itemWidth = (width - spacing * (columns - 1)) / columns;
+        return SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 20,
+            crossAxisSpacing: spacing,
+            mainAxisExtent: itemWidth * 9 / 16 + 84,
+          ),
+          delegate: SliverChildListDelegate(cards),
+        );
+      },
     ),
   );
 

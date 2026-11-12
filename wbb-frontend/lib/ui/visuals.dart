@@ -13,15 +13,16 @@ class WbbColors {
 }
 
 ThemeData wbbTheme() {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: WbbColors.accent,
-    brightness: Brightness.dark,
-  ).copyWith(
-    primary: WbbColors.accent,
-    surface: WbbColors.surface,
-    surfaceContainerHighest: WbbColors.surfaceHigh,
-    outlineVariant: WbbColors.border,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: WbbColors.accent,
+        brightness: Brightness.dark,
+      ).copyWith(
+        primary: WbbColors.accent,
+        surface: WbbColors.surface,
+        surfaceContainerHighest: WbbColors.surfaceHigh,
+        outlineVariant: WbbColors.border,
+      );
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
@@ -35,10 +36,12 @@ ThemeData wbbTheme() {
       elevation: 0,
       toolbarHeight: 52,
       centerTitle: false,
+      foregroundColor: Colors.white,
       titleTextStyle: TextStyle(
         fontFamily: 'NotoSansKR',
         fontSize: 18,
         fontWeight: FontWeight.w700,
+        color: Colors.white,
       ),
       shape: Border(bottom: BorderSide(color: WbbColors.border)),
     ),

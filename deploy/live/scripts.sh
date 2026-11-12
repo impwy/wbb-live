@@ -32,6 +32,8 @@ init-secrets)
     echo "WBB_EVAL_LOGIN_PASSWORD="
     echo "WBB_TURN_KEY_ID="
     echo "WBB_TURN_API_TOKEN="
+    echo "WBB_TOSS_CLIENT_KEY="
+    echo "WBB_TOSS_SECRET_KEY="
   } > .env
   echo "wrote .env (edit WBB_ICE_HOSTS)";;
 bootstrap)

@@ -3,8 +3,10 @@ package httpapi_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/impwy/wbb-live/wbb-backend/internal/config"
+	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
 )
 
 // COMMENT-01, COMMENT-02: signed-in users write, anyone reads, and only the
@@ -292,3 +295,83 @@ func TestLiveChatStreamAndSend(t *testing.T) {
 		}
 	}
 }
+
+// DONATION-02/03 with the Toss Payments provider: a fake Toss API stands in
+// for api.tosspayments.com. The server sends the stored order to Toss and
+// credits only when Toss reports DONE with the same order and amount.
+func TestDonationsWithTossProvider(t *testing.T) {
+	var confirms int
+	var tamper bool
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, _, ok := r.BasicAuth(); !ok || user != "test_sk_fake" {
+			http.Error(w, `{"code":"UNAUTHORIZED_KEY"}`, http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			PaymentKey string `json:"paymentKey"`
+			OrderID    string `json:"orderId"`
+			Amount     int    `json:"amount"`
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/payments/confirm":
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			confirms++
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/payments/"):
+			req.PaymentKey = strings.TrimPrefix(r.URL.Path, "/v1/payments/")
+			req.OrderID, req.Amount = lastOrder, lastAmount
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		lastOrder, lastAmount = req.OrderID, req.Amount
+		amount := req.Amount
+		if tamper {
+			amount++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"paymentKey": req.PaymentKey, "orderId": req.OrderID, "status": "DONE", "totalAmount": amount})
+	}))
+	t.Cleanup(fake.Close)
+
+	ts := newTestServer(t)
+	ts.api.SetPaymentProvider(&donations.Toss{SecretKey: "test_sk_fake", BaseURL: fake.URL, Client: fake.Client()})
+	ownerClient, donorClient := newJarClient(t), newJarClient(t)
+	_, ownerAccess, _ := registerAndLogin(t, ts, ownerClient, uniqueEmail())
+	_, donor, _ := registerAndLogin(t, ts, donorClient, uniqueEmail())
+	bid := createBroadcast(t, ts, ownerAccess, "토스 후원")["id"].(string)
+	api := ts.URL + "/api/v1"
+	order := func(amount int) string {
+		r := do(t, donorClient, "POST", api+"/broadcasts/"+bid+"/donations", map[string]any{"amount": amount}, donor)
+		if r.status != http.StatusCreated {
+			t.Fatalf("order: %d %v", r.status, r.body)
+		}
+		return r.body["order"].(map[string]any)["orderId"].(string)
+	}
+	confirm := func(orderID, key string, amount int) apiResp {
+		return do(t, donorClient, "POST", api+"/donations/confirm", map[string]any{"paymentKey": key, "orderId": orderID, "amount": amount}, donor)
+	}
+
+	first := order(10000)
+	if r := confirm(first, "toss_pk_1", 10000); r.status != 200 || r.body["credited"] != true {
+		t.Fatalf("toss confirm: %d %v", r.status, r.body)
+	}
+	if r := confirm(first, "toss_pk_1", 10000); r.body["credited"] != false || confirms != 1 {
+		t.Fatalf("repeat confirm reached Toss again or credited: %v confirms=%d", r.body, confirms)
+	}
+	if r := do(t, newJarClient(t), "POST", api+"/payments/webhook", map[string]any{"data": map[string]any{"paymentKey": "toss_pk_1"}}, ""); r.body["credited"] != false {
+		t.Fatalf("webhook re-credited: %v", r.body)
+	}
+	// Toss reporting a different amount than the order is never credited.
+	tamper = true
+	second := order(20000)
+	if r := confirm(second, "toss_pk_2", 20000); r.status != http.StatusConflict {
+		t.Fatalf("tampered Toss amount accepted: %d %v", r.status, r.body)
+	}
+	if r := do(t, newJarClient(t), "GET", api+"/broadcasts/"+bid+"/donations", nil, ""); r.body["count"].(float64) != 1 || r.body["total"].(float64) != 10000 {
+		t.Fatalf("toss summary: %v", r.body)
+	}
+}
+
+var (
+	lastOrder  string
+	lastAmount int
+)

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../api/wbb_api.dart';
 import '../models/donation.dart';
+import '../payments/toss.dart';
 import '../state/auth_controller.dart';
 import 'home_screen.dart' show formatBroadcastDate;
 import 'login_screen.dart';
@@ -31,6 +32,7 @@ class DonationsPanel extends StatefulWidget {
 
 class _DonationsPanelState extends State<DonationsPanel> {
   bool _enabled = false;
+  String _mode = 'test';
   DonationSummary? _summary;
   bool _starting = false;
   Timer? _poll;
@@ -54,13 +56,15 @@ class _DonationsPanelState extends State<DonationsPanel> {
     final epoch = ++_epoch;
     final api = context.read<ApiClient>();
     try {
-      final enabled = await api.paymentsEnabled();
+      final config = await api.paymentsConfig();
+      final enabled = config.enabled;
       final summary = enabled
           ? await api.listDonations(widget.broadcastId)
           : null;
       if (!mounted || epoch != _epoch) return;
       setState(() {
         _enabled = enabled;
+        _mode = config.mode;
         _summary = summary;
       });
     } on ApiException {
@@ -88,6 +92,21 @@ class _DonationsPanelState extends State<DonationsPanel> {
         message: choice.$2,
       );
       if (!mounted) return;
+      if (order.mode == 'toss') {
+        // Toss Payments test window; it redirects back to the result page,
+        // where the server confirms and verifies the payment.
+        final origin = Uri.base.origin;
+        final back = Uri.encodeQueryComponent(widget.broadcastId);
+        await requestTossPayment(order.clientKey, {
+          'orderId': order.orderId,
+          'amount': order.amount,
+          'orderName': order.orderName,
+          'customerKey': order.customerKey,
+          'successUrl': '$origin/donations/success?broadcastId=$back',
+          'failUrl': '$origin/donations/fail?broadcastId=$back',
+        });
+        return;
+      }
       // The test payment window (in-server gateway, no real charge).
       final approve = await showDialog<bool>(
         context: context,
@@ -172,7 +191,9 @@ class _DonationsPanelState extends State<DonationsPanel> {
         ),
         const SizedBox(height: 4),
         Text(
-          '서버 내장 테스트 결제로 진행되며 실제 금액은 청구되지 않습니다.',
+          _mode == 'toss'
+              ? '토스페이먼츠 테스트 결제로 진행되며 실제 금액은 청구되지 않습니다.'
+              : '서버 내장 테스트 결제로 진행되며 실제 금액은 청구되지 않습니다.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         if (summary != null)

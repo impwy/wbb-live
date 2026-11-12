@@ -35,9 +35,17 @@ class DonationOrder {
     required this.amount,
     required this.orderName,
     required this.recipient,
+    required this.customerKey,
+    required this.mode,
+    required this.clientKey,
   });
   final String orderId;
   final int amount;
   final String orderName;
   final String recipient;
+  final String customerKey;
+
+  /// "toss" (Toss Payments test keys) or "test" (in-server test gateway).
+  final String mode;
+  final String clientKey;
 }

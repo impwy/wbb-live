@@ -48,6 +48,9 @@ type Config struct {
 	TURNAPIToken                string        // secret API token for the TURN key
 	TURNCredentialTTL           time.Duration // lifetime of issued TURN credentials
 	RecordingsDir               string        // read-only MediaMTX recordings root; empty disables replays
+	QuickLogins                 []QuickLogin  // server-held test accounts offered as one-click logins
+	TossClientKey               string        // Toss Payments test client key (browser); empty uses the in-server test gateway
+	TossSecretKey               string        // Toss Payments test secret key (server only)
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -86,6 +89,8 @@ func Load() (Config, error) {
 		TURNAPIToken:                os.Getenv("WBB_TURN_API_TOKEN"),
 		TURNCredentialTTL:           12 * time.Hour,
 		RecordingsDir:               os.Getenv("WBB_RECORDINGS_DIR"),
+		TossClientKey:               os.Getenv("WBB_TOSS_CLIENT_KEY"),
+		TossSecretKey:               os.Getenv("WBB_TOSS_SECRET_KEY"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")
@@ -149,6 +154,20 @@ func Load() (Config, error) {
 		cfg.EvaluationLoginPassword = evalPassword
 	default:
 		return cfg, errors.New("WBB_EVAL_LOGIN_ENABLED must be true or false")
+	}
+	if path := os.Getenv("WBB_QUICK_LOGIN_FILE"); path != "" {
+		loaded, err := loadQuickLogins(path)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.QuickLogins = loaded
+	}
+	if (cfg.TossClientKey == "") != (cfg.TossSecretKey == "") {
+		return cfg, errors.New("WBB_TOSS_CLIENT_KEY and WBB_TOSS_SECRET_KEY must be set together")
+	}
+	// Donations run in the provider's test mode only; refuse live keys.
+	if cfg.TossClientKey != "" && (!strings.HasPrefix(cfg.TossClientKey, "test_") || !strings.HasPrefix(cfg.TossSecretKey, "test_")) {
+		return cfg, errors.New("WBB_TOSS_* must be test-mode keys (test_ prefix)")
 	}
 	if (cfg.TURNKeyID == "") != (cfg.TURNAPIToken == "") {
 		return cfg, errors.New("WBB_TURN_KEY_ID and WBB_TURN_API_TOKEN must be set together")

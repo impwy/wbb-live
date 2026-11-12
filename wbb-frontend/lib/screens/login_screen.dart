@@ -27,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
   bool _googleEnabled = false;
   bool _evaluationEnabled = false;
+  List<({String id, String label})> _quickLogins = const [];
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _googleEnabled = providers.googleEnabled;
           _evaluationEnabled = providers.evaluationEnabled;
+          _quickLogins = providers.quickLogins;
         });
       }
     } on ApiException {
@@ -48,6 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _googleEnabled = false;
           _evaluationEnabled = false;
+          _quickLogins = const [];
         });
       }
     }
@@ -126,6 +129,34 @@ class _LoginScreenState extends State<LoginScreen> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 16),
+                  ],
+                  if (_quickLogins.isNotEmpty) ...[
+                    Text(
+                      '시험 계정으로 바로 로그인',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final q in _quickLogins)
+                          OutlinedButton(
+                            key: Key('login-quick-${q.id}'),
+                            onPressed: _busy
+                                ? null
+                                : () => _completeLogin(
+                                    () => context
+                                        .read<AuthController>()
+                                        .quickLogin(q.id),
+                                  ),
+                            child: Text(q.label),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_evaluationEnabled || _quickLogins.isNotEmpty) ...[
                     const Row(
                       children: [
                         Expanded(child: Divider()),

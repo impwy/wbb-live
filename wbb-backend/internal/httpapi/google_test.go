@@ -113,7 +113,7 @@ func googleBrowser(t *testing.T) *http.Client {
 func googleStart(t *testing.T, ts *testServer, c *http.Client, g *googleTransport) (string, string) {
 	t.Helper()
 	providers := do(t, c, "GET", ts.URL+"/api/v1/auth/providers", nil, "")
-	if providers.status != 200 || providers.body["googleEnabled"] != true || providers.body["evaluationEnabled"] != false || len(providers.body) != 2 {
+	if providers.status != 200 || providers.body["googleEnabled"] != true || providers.body["evaluationEnabled"] != false || len(providers.body["quickLogins"].([]any)) != 0 || len(providers.body) != 3 {
 		t.Fatalf("provider response: %d %v", providers.status, providers.body)
 	}
 	r := do(t, c, "GET", ts.URL+"/api/v1/auth/google/start", nil, "")

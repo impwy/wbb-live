@@ -1,5 +1,5 @@
 // Package donations records donations paid through a test-mode payment
-// provider (an in-process gateway, MemoryProvider). The server fixes the recipient and amount when the order is
+// provider: Toss Payments with test keys, or the in-process MemoryProvider. The server fixes the recipient and amount when the order is
 // created and confirms a payment only after the provider reports it DONE
 // with the same order id and amount. Confirmation is idempotent: repeated
 // approval notices for an order credit it once.
@@ -43,10 +43,11 @@ type Provider interface {
 }
 
 type Order struct {
-	OrderID   string `json:"orderId"`
-	Amount    int    `json:"amount"`
-	OrderName string `json:"orderName"`
-	Recipient string `json:"recipient"`
+	OrderID     string `json:"orderId"`
+	Amount      int    `json:"amount"`
+	OrderName   string `json:"orderName"`
+	Recipient   string `json:"recipient"`
+	CustomerKey string `json:"customerKey"` // the donor id, for the provider SDK
 }
 
 type Donation struct {
@@ -107,7 +108,7 @@ func (s *Service) CreateOrder(ctx context.Context, donorID, broadcastID string, 
 	if len(name) > 100 {
 		name = name[:100]
 	}
-	return Order{OrderID: orderID, Amount: amount, OrderName: string(name), Recipient: recipient}, nil
+	return Order{OrderID: orderID, Amount: amount, OrderName: string(name), Recipient: recipient, CustomerKey: donorID}, nil
 }
 
 // authorizer is a provider whose test checkout runs in this process.

@@ -38,9 +38,13 @@ class AuthProviders {
   const AuthProviders({
     required this.googleEnabled,
     required this.evaluationEnabled,
+    this.quickLogins = const [],
   });
   final bool googleEnabled;
   final bool evaluationEnabled;
+
+  /// Server-held test accounts: (id, label) only, never credentials.
+  final List<({String id, String label})> quickLogins;
 }
 
 /// A start response for the publisher only. Never place this in public
@@ -208,9 +212,19 @@ class ApiClient {
 
   Future<AuthProviders> authProviders() async {
     final data = await _request('GET', '/auth/providers');
+    final quick = data['quickLogins'];
     return AuthProviders(
       googleEnabled: data['googleEnabled'] == true,
       evaluationEnabled: data['evaluationEnabled'] == true,
+      quickLogins: quick is List
+          ? [
+              for (final q in quick.whereType<Map<String, dynamic>>())
+                (
+                  id: q['id'] as String? ?? '',
+                  label: q['label'] as String? ?? '',
+                ),
+            ].where((q) => q.id.isNotEmpty).toList()
+          : const [],
     );
   }
 
@@ -234,6 +248,10 @@ class ApiClient {
 
   Future<LoginResult> evaluationLogin() =>
       _beginLogin('/auth/evaluation-login');
+
+  /// One-click sign-in as a server-held test account.
+  Future<LoginResult> quickLogin(String id) =>
+      _beginLogin('/auth/quick-login/${Uri.encodeComponent(id)}');
 
   Future<LoginResult> _beginLogin(String path, {Object? body}) async {
     final epoch = ++_authEpoch;
@@ -443,10 +461,13 @@ class ApiClient {
 
   // -- donations -------------------------------------------------------------
 
-  /// Whether donations are enabled (test-mode payments configured).
-  Future<bool> paymentsEnabled() async {
+  /// Whether donations are enabled and which test payment mode is used.
+  Future<({bool enabled, String mode})> paymentsConfig() async {
     final data = await _request('GET', '/payments/config');
-    return data['enabled'] == true;
+    return (
+      enabled: data['enabled'] == true,
+      mode: data['mode'] as String? ?? 'test',
+    );
   }
 
   Future<DonationSummary> listDonations(String broadcastId) async {
@@ -477,6 +498,9 @@ class ApiClient {
       amount: (order['amount'] as num).toInt(),
       orderName: order['orderName'] as String,
       recipient: order['recipient'] as String? ?? '',
+      customerKey: order['customerKey'] as String? ?? '',
+      mode: data['mode'] as String? ?? 'test',
+      clientKey: data['clientKey'] as String? ?? '',
     );
   }
 

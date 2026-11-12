@@ -52,6 +52,8 @@ class AuthController extends ChangeNotifier {
 
   Future<void> evaluationLogin() => _signIn(_api.evaluationLogin);
 
+  Future<void> quickLogin(String id) => _signIn(() => _api.quickLogin(id));
+
   Future<void> _signIn(Future<LoginResult> Function() request) async {
     final epoch = ++_intentEpoch;
     _restoring = false;

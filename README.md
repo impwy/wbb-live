@@ -58,6 +58,11 @@
 
 방송 정보·회차·종료 상태는 PostgreSQL에 저장됩니다. API·DB 컨테이너를 재시작해도 목록·상세·종료 상태가 그대로 조회됩니다.
 
+### 추가 기능: 라이브 채팅
+
+1. 방송 상세에서 PC는 재생 화면 오른쪽, 휴대폰은 재생 버튼 아래에 **채팅** 창이 있습니다. 로그인 없이 실시간으로 읽고, 로그인하면 보낼 수 있습니다(200자, 너무 빠른 연속 전송은 429).
+2. 서버는 Server-Sent Events(`GET /api/v1/broadcasts/{id}/chat/stream`)로 최근 50개와 새 메시지를 밀어 주고, Redis pub/sub로 API 인스턴스 간에 전달합니다. 채팅은 휘발성이며 최근 기록은 24시간만 보관합니다(영구 기록이 필요한 글은 댓글 사용).
+
 ### 선택 기능: 댓글 (COMMENT-01·02)
 
 1. 방송 상세 화면 아래 **댓글**에서 로그인한 사용자가 댓글을 작성합니다. 목록은 로그인 없이 볼 수 있고 5초마다 갱신됩니다.
@@ -203,6 +208,8 @@ media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결
 | GET `/broadcasts/{id}/sessions/current` | 공개 | 현재/최근 회차 또는 null; 민감 정보 제외 |
 | POST `/broadcasts/{id}/sessions/{sid}/stop` | 소유자 |202 종료 처리, 이미 종료면200 |
 | POST `/broadcasts/{id}/sessions/{sid}/publish-grants` | 원래 로그인 family의 소유자 | 조건을 만족하는 준비 회차의 만료 grant 갱신 |
+| GET `/broadcasts/{id}/chat/stream` | 공개 | 라이브 채팅 SSE (최근 50개 + 실시간) |
+| POST `/broadcasts/{id}/chat` | 로그인 | `{text}` 1~200자, 연속 전송 제한 |
 | GET `/broadcasts/{id}/comments` | 공개 | 최근 댓글(오래된 순) |
 | POST `/broadcasts/{id}/comments` | 로그인 | `{body}` 1~500자 |
 | PATCH·DELETE `/comments/{id}` | 작성자 | 다른 사용자 403 |

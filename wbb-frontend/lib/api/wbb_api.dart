@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../config.dart';
 import '../models/broadcast.dart';
+import '../models/chat_message.dart';
 import '../models/comment.dart';
 import '../models/donation.dart';
 import '../models/recording.dart';
@@ -505,6 +506,23 @@ class ApiClient {
       auth: true,
     );
     return data['credited'] == true;
+  }
+
+  // -- live chat -------------------------------------------------------------
+
+  /// Absolute URL of the public chat event stream (SSE).
+  String chatStreamUrl(String broadcastId) => Uri.base
+      .resolve('$_baseUrl/broadcasts/$broadcastId/chat/stream')
+      .toString();
+
+  Future<ChatMessage> sendChat(String broadcastId, String text) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/chat',
+      body: {'text': text},
+      auth: true,
+    );
+    return ChatMessage.fromJson(data['message'] as Map<String, dynamic>);
   }
 
   // -- comments --------------------------------------------------------------

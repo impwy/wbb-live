@@ -78,6 +78,10 @@ type statusWriter struct {
 	status int
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer (flush,
+// per-request write deadlines for streams).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)

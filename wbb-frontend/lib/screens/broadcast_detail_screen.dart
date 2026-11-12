@@ -10,6 +10,7 @@ import '../media/live_publisher.dart';
 import '../media/media_platform.dart';
 import '../state/auth_controller.dart';
 import 'broadcast_form_screen.dart';
+import 'chat_panel.dart';
 import 'comments_panel.dart';
 import 'donations_panel.dart';
 import 'recording_screen.dart';
@@ -519,9 +520,9 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
             )
           : b == null
           ? const Center(child: Text('방송 정보가 없습니다.'))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
+          : _withChat(
+              b.id,
+              (wide) => [
                 Center(
                   child: _stage(
                     context,
@@ -660,6 +661,10 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                   ),
                 const SizedBox(height: 4),
                 Text(_playbackStatus, key: const Key('playback-status')),
+                if (!wide) ...[
+                  const SizedBox(height: 12),
+                  ChatPanel(broadcastId: b.id, height: 300),
+                ],
                 const SizedBox(height: 16),
                 Text('방송자: ${b.ownerDisplayName}'),
                 const SizedBox(height: 4),
@@ -683,6 +688,37 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                 const SizedBox(height: 20),
               ],
             ),
+    );
+  }
+
+  /// Wide screens put live chat beside the content; phones show it below the
+  /// playback controls inside the scrolling content.
+  Widget _withChat(String broadcastId, List<Widget> Function(bool wide) build) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 1000;
+        final content = ListView(
+          padding: const EdgeInsets.all(16),
+          children: build(wide),
+        );
+        if (!wide) return content;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: content),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
+              child: SizedBox(
+                width: 360,
+                child: ChatPanel(
+                  broadcastId: broadcastId,
+                  height: double.infinity,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 

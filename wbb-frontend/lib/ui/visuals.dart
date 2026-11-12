@@ -19,6 +19,7 @@ ThemeData wbbTheme() {
         brightness: Brightness.dark,
       ).copyWith(
         primary: WbbColors.accent,
+    onPrimary: Colors.white,
         surface: WbbColors.surface,
         surfaceContainerHighest: WbbColors.surfaceHigh,
         outlineVariant: WbbColors.border,

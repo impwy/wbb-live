@@ -193,7 +193,7 @@ async function main() {
     if (!bid) throw new Error('created broadcast not found by public list');
     await owner.getByRole('button',{name:camera?'카메라·마이크 시작':'화면 공유 시작'}).click();
     try {
-      await owner.getByText('송출: publishing').waitFor({timeout:camera?10000:25000});
+      await owner.getByText('송출: 송출 중').waitFor({timeout:camera?10000:25000});
     } catch(error) {
       console.error('publish state',await owner.getByText(/송출:|실패|권한/).allTextContents().catch(()=>[]));
       console.error('capture calls',await owner.evaluate(()=>({display:window.__flutterMediaTest?.displayCalls,

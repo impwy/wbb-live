@@ -27,14 +27,14 @@ type updateBroadcastRequest struct {
 	Description *string `json:"description"`
 }
 
-// handleListBroadcasts: GET /api/v1/broadcasts?status=&cursor=&limit= (public).
+// handleListBroadcasts: GET /api/v1/broadcasts?status=&ownerId=&cursor=&limit= (public).
 func (s *Server) handleListBroadcasts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, err := strconv.Atoi(q.Get("limit"))
 	if err != nil || limit < 1 {
 		limit = 20
 	}
-	items, next, err := s.broadcasts.List(r.Context(), q.Get("status"), q.Get("cursor"), limit)
+	items, next, err := s.broadcasts.List(r.Context(), broadcasts.ListFilter{Status: q.Get("status"), OwnerID: q.Get("ownerId")}, q.Get("cursor"), limit)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return

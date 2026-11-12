@@ -601,12 +601,12 @@ void main() {
       PublishPhase.publishing,
       reason: '${publisher.message} $requests',
     );
-    expect(find.text('송출: publishing'), findsOneWidget);
+    expect(find.text('송출: 송출 중'), findsOneWidget);
     await tester.tap(find.byKey(const Key('session-cancel')));
     await tester.pumpAndSettle();
     expect(attempt.stops, 1);
     expect(find.text('서버 종료를 확인하지 못했습니다. 상태를 새로고침해 주세요.'), findsOneWidget);
-    expect(find.text('송출: error'), findsOneWidget);
+    expect(find.text('송출: 오류'), findsOneWidget);
   });
 
   testWidgets(

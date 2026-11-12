@@ -8,15 +8,15 @@
 //   - Deletes are soft; deleted broadcasts disappear from public reads.
 //   - Title 1..100 chars, description 0..2000 chars.
 //
-// The status field is derived from broadcast_sessions once media sessions
-// exist; until then every broadcast reports status "ready" with a null
-// currentSessionId.
+// The status field is the state of the latest broadcast session, or "ready"
+// with a null currentSessionId when the broadcast never started.
 package broadcasts
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +51,8 @@ const (
 	defaultLimit = 20
 	maxLimit     = 50
 )
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Owner is the public owner summary embedded in broadcast objects.
 type Owner struct {
@@ -129,17 +131,17 @@ func (s *Service) Get(ctx context.Context, id string) (Broadcast, error) {
 	)
 }
 
+// ListFilter narrows the public list. Status "live" keeps broadcasts whose
+// latest session is publicly playable; OwnerID keeps one owner's broadcasts.
+type ListFilter struct {
+	Status  string
+	OwnerID string
+}
+
 // List returns non-deleted broadcasts newest-first with an opaque cursor.
-// statusFilter "live" currently returns no rows because live sessions are not
-// implemented yet; it is wired through so the contract stays stable.
-func (s *Service) List(ctx context.Context, statusFilter, cursor string, limit int) ([]Broadcast, string, error) {
-	if statusFilter != "" && statusFilter != "all" && statusFilter != "live" {
+func (s *Service) List(ctx context.Context, filter ListFilter, cursor string, limit int) ([]Broadcast, string, error) {
+	if filter.Status != "" && filter.Status != "all" && filter.Status != "live" {
 		return nil, "", &InvalidInputError{Field: "status", Reason: "must be \"live\" or \"all\""}
-	}
-	if statusFilter == "live" {
-		// No broadcast_sessions exist yet; live is honestly empty until the
-		// media step lands.
-		return []Broadcast{}, "", nil
 	}
 	if limit < 1 {
 		limit = defaultLimit
@@ -150,13 +152,23 @@ func (s *Service) List(ctx context.Context, statusFilter, cursor string, limit i
 
 	args := []any{}
 	where := "b.deleted_at IS NULL"
+	if filter.Status == "live" {
+		where += " AND latest.state = 'live'"
+	}
+	if filter.OwnerID != "" {
+		if !uuidPattern.MatchString(filter.OwnerID) {
+			return nil, "", &InvalidInputError{Field: "ownerId", Reason: "invalid"}
+		}
+		args = append(args, filter.OwnerID)
+		where += fmt.Sprintf(" AND b.owner_id = $%d", len(args))
+	}
 	if cursor != "" {
 		createdAt, id, err := decodeCursor(cursor)
 		if err != nil {
 			return nil, "", &InvalidInputError{Field: "cursor", Reason: "invalid"}
 		}
 		args = append(args, createdAt, id)
-		where += " AND (b.created_at, b.id) < ($1, $2)"
+		where += fmt.Sprintf(" AND (b.created_at, b.id) < ($%d, $%d)", len(args)-1, len(args))
 	}
 	args = append(args, limit+1)
 

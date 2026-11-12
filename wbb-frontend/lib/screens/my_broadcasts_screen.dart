@@ -7,8 +7,7 @@ import 'broadcast_form_screen.dart';
 import 'broadcast_detail_screen.dart';
 
 /// The signed-in broadcaster's own broadcasts: create, edit, delete.
-/// The API has no owner filter yet, so pages are walked and filtered by
-/// ownerId client-side (noted as a contract gap for Codex).
+/// Pages are fetched with the server-side owner filter.
 class MyBroadcastsScreen extends StatefulWidget {
   const MyBroadcastsScreen({super.key});
 
@@ -38,8 +37,12 @@ class _MyBroadcastsScreenState extends State<MyBroadcastsScreen> {
       final mine = <Broadcast>[];
       var cursor = '';
       while (true) {
-        final page = await api.listBroadcasts(cursor: cursor.isEmpty ? null : cursor);
-        mine.addAll(page.items.where((b) => b.ownerId == myUserId));
+        final page = await api.listBroadcasts(
+          cursor: cursor.isEmpty ? null : cursor,
+          limit: 50,
+          ownerId: myUserId,
+        );
+        mine.addAll(page.items);
         if (page.nextCursor.isEmpty) break;
         cursor = page.nextCursor;
       }

@@ -346,9 +346,16 @@ class ApiClient {
 
   // -- broadcasts ------------------------------------------------------------
 
-  Future<BroadcastPage> listBroadcasts({String? cursor, int limit = 20}) async {
+  Future<BroadcastPage> listBroadcasts({
+    String? cursor,
+    int limit = 20,
+    bool liveOnly = false,
+    String? ownerId,
+  }) async {
     final query = <String, String>{'limit': '$limit'};
     if (cursor != null && cursor.isNotEmpty) query['cursor'] = cursor;
+    if (liveOnly) query['status'] = 'live';
+    if (ownerId != null && ownerId.isNotEmpty) query['ownerId'] = ownerId;
     final data = await _request(
       'GET',
       '/broadcasts?${Uri(queryParameters: query).query}',

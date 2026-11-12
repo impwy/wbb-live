@@ -51,12 +51,15 @@ services:
       # Optional Cloudflare TURN relay for publishers behind blocked ICE ports.
       WBB_TURN_KEY_ID: ${WBB_TURN_KEY_ID:-}
       WBB_TURN_API_TOKEN: ${WBB_TURN_API_TOKEN:-}
+      WBB_RECORDINGS_DIR: /recordings
       # Behind the proxies every client shares one RemoteAddr bucket, so the
       # per-IP budgets are global budgets here (see README).
       WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}
       WBB_RATE_LIMIT_ACCOUNT_REQUESTS: ${WBB_RATE_LIMIT_ACCOUNT_REQUESTS:-20}
       WBB_EVAL_LOGIN_IP_LIMIT: ${WBB_EVAL_LOGIN_IP_LIMIT:-60}
       WBB_EVAL_LOGIN_ACCOUNT_LIMIT: ${WBB_EVAL_LOGIN_ACCOUNT_LIMIT:-30}
+    volumes:
+      - recordings:/recordings:ro
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -109,11 +112,15 @@ services:
       WBB_MEDIA_WHIP_URL: http://mediamtx:8889
       WBB_MEDIA_RTSP_HOST: mediamtx:8554
       WBB_MEDIA_LOCK_FILE: /run/wbb-worker/worker.lock
+      # Replays: the transcoder also writes fragmented MP4 files here.
+      WBB_RECORDINGS_DIR: /recordings
       WBB_COMPLETION_URL: http://mediamtx:9998
       WBB_COMPLETION_ROOT: ${WBB_COMPLETION_ROOT:?required}
       WBB_COMPLETION_SLOT: ${WBB_COMPLETION_SLOT:?required}
       WBB_COMPLETION_KEY_HEX: ${WBB_COMPLETION_KEY_HEX:?required}
-    volumes: [worker-lock:/run/wbb-worker]
+    volumes:
+      - worker-lock:/run/wbb-worker
+      - recordings:/recordings
     depends_on:
       api: {condition: service_healthy}
       mediamtx: {condition: service_started}
@@ -137,6 +144,7 @@ services:
 networks:
   private: {driver: bridge}
 volumes:
+  recordings:
   pg-data:
   worker-lock:
   edge-data:

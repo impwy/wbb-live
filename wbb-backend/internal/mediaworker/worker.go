@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,12 +31,15 @@ type Worker struct {
 	Completion         *mediacompletion.Client
 	Secret             []byte
 	RTSPHost, LockFile string
-	Log                *slog.Logger
-	incarnation        string
-	lockFile           *os.File
-	runs               map[string]*running
-	lostLease          map[string]bool
-	snapshotFailedAt   time.Time
+	// RecordingsDir, when set, also stores the 720p output as fragmented MP4
+	// replays (<dir>/wbb/<session>/<generation>/720p/<UTC start>.mp4).
+	RecordingsDir    string
+	Log              *slog.Logger
+	incarnation      string
+	lockFile         *os.File
+	runs             map[string]*running
+	lostLease        map[string]bool
+	snapshotFailedAt time.Time
 }
 
 // A short management stall must not kill a separate healthy broadcast. If
@@ -332,6 +336,27 @@ func (w *Worker) stopForSnapshotOutage(ctx context.Context) error {
 	return nil
 }
 
+// outputArgs publishes the 720p stream over RTSP and, when recording is
+// enabled, tees the same encoded packets into a fragmented MP4 replay. A
+// recording failure never stops the live output (onfail=ignore).
+func (w *Worker) outputArgs(output, outURL string) []string {
+	live := []string{"-f", "rtsp", "-rtsp_transport", "tcp", outURL}
+	if w.RecordingsDir == "" {
+		return live
+	}
+	dir := filepath.Join(w.RecordingsDir, filepath.FromSlash(output))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		w.Log.Warn("recording disabled for run", "error", err)
+		return live
+	}
+	file := filepath.Join(dir, time.Now().UTC().Format("2006-01-02_15-04-05-000000")+".mp4")
+	tee := "[f=rtsp:rtsp_transport=tcp]" + outURL +
+		"|[f=mp4:movflags=+frag_keyframe+empty_moov+default_base_moof:onfail=ignore]" + file
+	// The MP4 needs codec headers up front (global_header); repeat-headers
+	// keeps SPS/PPS in every keyframe of the live stream as well.
+	return []string{"-flags", "+global_header", "-x264-params", "repeat-headers=1", "-f", "tee", tee}
+}
+
 func paths(s sessionRow) (string, string) {
 	return fmt.Sprintf("wbb/%s/%d/source", s.id, s.generation), fmt.Sprintf("wbb/%s/%d/720p", s.id, s.generation)
 }
@@ -470,7 +495,8 @@ func (w *Worker) start(ctx context.Context, s sessionRow, oldOutputReady bool) (
 		"-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "500k", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
 		// Write packets as they come. Interleaving would hold video while a
 		// mobile track pauses, and MediaMTX closes a silent publisher in 5s.
-		"-max_interleave_delta", "0", "-f", "rtsp", "-rtsp_transport", "tcp", outURL)
+		"-max_interleave_delta", "0")
+	cmd.Args = append(cmd.Args, w.outputArgs(output, outURL)...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = newTranscoderLog(w.Log, s.id)
 	// Keep the Linux flock open in FFmpeg (fd 3). If the worker dies but FFmpeg

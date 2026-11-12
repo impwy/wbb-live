@@ -42,7 +42,8 @@ func main() {
 			mtx := mediaworker.NewMTXClient(os.Getenv("WBB_MEDIA_API_URL"), os.Getenv("WBB_MEDIA_HLS_URL"), "control", mediaworker.ControlCredential(secret))
 			mtx.WHIPBase = os.Getenv("WBB_MEDIA_WHIP_URL")
 			worker := &mediaworker.Worker{DB: p, MTX: mtx, Completion: completion, Secret: secret,
-				RTSPHost: os.Getenv("WBB_MEDIA_RTSP_HOST"), LockFile: os.Getenv("WBB_MEDIA_LOCK_FILE"), Log: log}
+				RTSPHost: os.Getenv("WBB_MEDIA_RTSP_HOST"), LockFile: os.Getenv("WBB_MEDIA_LOCK_FILE"),
+				RecordingsDir: os.Getenv("WBB_RECORDINGS_DIR"), Log: log}
 			if err := worker.Run(ctx); err != nil {
 				log.Error("media worker stopped", "error", err)
 				os.Exit(1)

@@ -236,6 +236,10 @@ void main() {
             AppLifecycleState.hidden,
           );
           await tester.pump();
+          // Real browsers pass through inactive on the way back.
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
           tester.binding.handleAppLifecycleStateChanged(
             AppLifecycleState.resumed,
           );
@@ -370,6 +374,9 @@ void main() {
         expect(attempt.stops, selected == PublishSource.camera ? 1 : 0);
         expect(stops, selected == PublishSource.camera ? 1 : 0);
         final beforeResume = detailReads;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );

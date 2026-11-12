@@ -47,6 +47,7 @@ type Config struct {
 	TURNKeyID                   string        // Cloudflare TURN key id; empty disables relay credentials
 	TURNAPIToken                string        // secret API token for the TURN key
 	TURNCredentialTTL           time.Duration // lifetime of issued TURN credentials
+	RecordingsDir               string        // read-only MediaMTX recordings root; empty disables replays
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -84,6 +85,7 @@ func Load() (Config, error) {
 		TURNKeyID:                   os.Getenv("WBB_TURN_KEY_ID"),
 		TURNAPIToken:                os.Getenv("WBB_TURN_API_TOKEN"),
 		TURNCredentialTTL:           12 * time.Hour,
+		RecordingsDir:               os.Getenv("WBB_RECORDINGS_DIR"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")

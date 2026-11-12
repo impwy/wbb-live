@@ -5,6 +5,9 @@ import 'package:http/http.dart' as http;
 
 import '../config.dart';
 import '../models/broadcast.dart';
+import '../models/comment.dart';
+import '../models/donation.dart';
+import '../models/recording.dart';
 import '../models/live_session.dart';
 import '../models/user.dart';
 import 'http_client.dart';
@@ -412,6 +415,129 @@ class ApiClient {
       auth: true,
     );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
+  }
+
+  // -- recordings (replays) ---------------------------------------------------
+
+  Future<List<Recording>> listRecordings({String? broadcastId}) async {
+    final data = await _request(
+      'GET',
+      broadcastId == null
+          ? '/recordings'
+          : '/broadcasts/$broadcastId/recordings',
+    );
+    return (data['items'] as List<dynamic>)
+        .map((e) => Recording.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Recording> getRecording(String id) async {
+    final data = await _request('GET', '/recordings/$id');
+    return Recording.fromJson(data['recording'] as Map<String, dynamic>);
+  }
+
+  /// Absolute URL of the recording's MP4 (public, Range-capable).
+  String recordingMediaUrl(String id) =>
+      Uri.base.resolve('$_baseUrl/recordings/$id/media').toString();
+
+  // -- donations -------------------------------------------------------------
+
+  /// Whether donations are enabled (test-mode payments configured).
+  Future<bool> paymentsEnabled() async {
+    final data = await _request('GET', '/payments/config');
+    return data['enabled'] == true;
+  }
+
+  Future<DonationSummary> listDonations(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/donations');
+    return DonationSummary(
+      items: (data['items'] as List<dynamic>)
+          .map((e) => Donation.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      total: (data['total'] as num).toInt(),
+      count: (data['count'] as num).toInt(),
+    );
+  }
+
+  Future<DonationOrder> createDonation(
+    String broadcastId, {
+    required int amount,
+    String message = '',
+  }) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/donations',
+      body: {'amount': amount, 'message': message},
+      auth: true,
+    );
+    final order = data['order'] as Map<String, dynamic>;
+    return DonationOrder(
+      orderId: order['orderId'] as String,
+      amount: (order['amount'] as num).toInt(),
+      orderName: order['orderName'] as String,
+      recipient: order['recipient'] as String? ?? '',
+    );
+  }
+
+  /// The in-server test payment window. Approving returns the payment key
+  /// issued for the stored order amount; declining fails the order.
+  Future<String> testCheckout(String orderId, {required bool approve}) async {
+    final data = await _request(
+      'POST',
+      '/payments/test-checkout',
+      body: {'orderId': orderId, 'approve': approve},
+      auth: true,
+    );
+    return data['paymentKey'] as String;
+  }
+
+  /// Returns true when this call credited the donation, false when it had
+  /// already been credited (a repeated confirmation).
+  Future<bool> confirmDonation({
+    required String paymentKey,
+    required String orderId,
+    required int amount,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/donations/confirm',
+      body: {'paymentKey': paymentKey, 'orderId': orderId, 'amount': amount},
+      auth: true,
+    );
+    return data['credited'] == true;
+  }
+
+  // -- comments --------------------------------------------------------------
+
+  Future<List<Comment>> listComments(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/comments');
+    return (data['items'] as List<dynamic>)
+        .map((e) => Comment.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Comment> createComment(String broadcastId, String body) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/comments',
+      body: {'body': body},
+      auth: true,
+    );
+    return Comment.fromJson(data['comment'] as Map<String, dynamic>);
+  }
+
+  Future<Comment> updateComment(String commentId, String body) async {
+    final data = await _request(
+      'PATCH',
+      '/comments/$commentId',
+      body: {'body': body},
+      auth: true,
+    );
+    return Comment.fromJson(data['comment'] as Map<String, dynamic>);
+  }
+
+  Future<void> deleteComment(String commentId) async {
+    await _request('DELETE', '/comments/$commentId', auth: true);
   }
 
   Future<void> deleteBroadcast(String id, {required int version}) async {

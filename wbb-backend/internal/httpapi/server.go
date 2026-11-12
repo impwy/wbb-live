@@ -72,6 +72,10 @@ func (s *Server) RunMaintenance(ctx context.Context) {
 	s.sessions.RunMaintenance(ctx, func(err error) { s.log.Error("session maintenance", "error", err) })
 }
 
+// ScanRecordings runs one recording registration pass (tests; production
+// runs it periodically from RunMaintenance).
+func (s *Server) ScanRecordings(ctx context.Context) error { return s.recordings.Scan(ctx) }
+
 // SetSessionClock is an integration-test clock seam; production never calls it.
 func (s *Server) SetSessionClock(now func() time.Time) { s.sessions.SetClock(now) }
 

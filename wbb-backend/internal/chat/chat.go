@@ -105,7 +105,15 @@ func (s *Service) History(ctx context.Context, broadcastID string) ([]Message, e
 // Listen registers a local listener for a broadcast. The returned cancel
 // function must be called when the listener goes away.
 func (s *Service) Listen(broadcastID string) (<-chan Message, func()) {
-	s.once.Do(func() { go s.dispatch() })
+	s.once.Do(func() {
+		// Wait for Redis to confirm the subscription so the first viewer
+		// cannot miss a message sent right after connecting.
+		sub := s.rdb.PSubscribe(context.Background(), channelPfx+"*")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = sub.Receive(ctx)
+		cancel()
+		go s.dispatch(sub)
+	})
 	ch := make(chan Message, 64)
 	s.mu.Lock()
 	room := s.rooms[broadcastID]
@@ -126,8 +134,7 @@ func (s *Service) Listen(broadcastID string) (<-chan Message, func()) {
 }
 
 // dispatch holds the process-wide subscription; go-redis reconnects it.
-func (s *Service) dispatch() {
-	sub := s.rdb.PSubscribe(context.Background(), channelPfx+"*")
+func (s *Service) dispatch(sub *redis.PubSub) {
 	for m := range sub.Channel() {
 		var msg Message
 		if json.Unmarshal([]byte(m.Payload), &msg) != nil {

@@ -31,6 +31,6 @@ cp -r <flutter build/web> web # 정적 파일
 ## 운영 주의
 
 - `completion-state` 볼륨(외부 볼륨 `wbb-live_completion-state`)과 `pg-data`는 롤백 시에도 지우지 않는다. `down -v`를 사용하지 않는다.
-- 업데이트: 새 소스·정적 파일 배치 후 `./scripts.sh up` (bootstrap은 다시 실행하지 않음).
+- 업데이트: 새 소스·정적 파일 배치 후 `./scripts.sh up` (bootstrap은 다시 실행하지 않음). `web` 디렉터리를 지우고 다시 만들면 edge의 bind mount가 옛 디렉터리를 가리키므로 `docker compose ... restart edge`가 필요하다.
 - 되돌리기: `conf.d`의 live 파일만 제거하고 Caddy reload, `./scripts.sh down`.
 - 프록시 뒤에서 API의 IP별 요청 한도는 전체 공용 한도로 동작한다. 기본값은 `compose.yml`에서 상향했다.

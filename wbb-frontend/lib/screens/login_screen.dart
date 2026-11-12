@@ -95,9 +95,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('로그인')),
-      body: Center(
+      body: Align(
+        alignment: Alignment.topCenter,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+          constraints: const BoxConstraints(maxWidth: 480),
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Form(
@@ -105,6 +106,38 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_evaluationEnabled) ...[
+                    FilledButton.tonalIcon(
+                      key: const Key('login-evaluation'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                      onPressed: _busy
+                          ? null
+                          : () => _completeLogin(
+                              context.read<AuthController>().evaluationLogin,
+                            ),
+                      icon: const Icon(Icons.bolt),
+                      label: const Text('평가용 바로 로그인'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '심사용 계정으로 비밀번호 없이 로그인합니다.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
+                    const Row(
+                      children: [
+                        Expanded(child: Divider()),
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8),
+                          child: Text('또는 이메일로 로그인'),
+                        ),
+                        Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   TextFormField(
                     key: const Key('login-email'),
                     controller: _email,
@@ -135,6 +168,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 20),
                   FilledButton(
                     key: const Key('login-submit'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
                     onPressed: _busy ? null : _submit,
                     child: _busy
                         ? const SizedBox(
@@ -155,18 +191,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                   context.read<ApiClient>().googleStartUri,
                                 )),
                       child: const Text('Google로 로그인'),
-                    ),
-                  ],
-                  if (_evaluationEnabled) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      key: const Key('login-evaluation'),
-                      onPressed: _busy
-                          ? null
-                          : () => _completeLogin(
-                              context.read<AuthController>().evaluationLogin,
-                            ),
-                      child: const Text('평가용 바로 로그인'),
                     ),
                   ],
                   TextButton(

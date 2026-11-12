@@ -4,6 +4,16 @@
 
 ## 지정 세션과 현재 상태
 
+### 최신: 2026-11-12 Claude Code 단독 이어받기·공개 배포
+
+사용자가 Codex에서 진행하던 작업을 Claude Code(tmux `%0`)가 이어서 필수 요구사항 완료까지 개발하도록 지시했다. 대체 Codex `%12`는 사용자 stop 지시 후 대기(주간 한도 19%)이며 pi `%10`도 편집하지 않는다. 현재 단독 편집자는 Claude Code다. 사용자는 이후 추가 테스트 없이 개발을 진행하라고 지시했다.
+
+- 09-A1 평가 로그인 `f922149`: 대상 Go 테스트(config, httpapi Evaluation/Google/Login/Provider)를 일회용 PostgreSQL로 통과한 뒤 커밋했다.
+- `2f7cc3b`: 목록 `status=live`·`ownerId` 필터, 카드형 목록·방송 중 필터·자동 갱신·등록 버튼, 상세의 재생 영역·소유자 수정/삭제. `flutter analyze`만 실행했다(테스트 미실행).
+- `8dbd361` 및 후속: `deploy/live` Compose(`wbb-live`)를 Labtop에 배포했다. 호스트 Caddy에는 `conf.d/live.wombatburrow.caddy`만 추가해 보호 사본 validate 후 reload했고 기존 root 응답 308은 유지됐다. 외부 회선에서 신뢰 TLS·providers·평가 로그인 Origin 403·HLS 미인가 403을 확인했다. 평가 계정 비밀번호는 서버 `.env`(600)에만 있다.
+- 미완료: 공유기 ICE UDP/TCP 18391 전달(사용자 외출 중), 실제 PC·iPhone·외부망 송출 인수, 09-A2 회귀.
+
+
 ### 최신: 2026-11-11 07-A2 제품 매트릭스 게시 준비·09-A 인계
 
 지정 pi `%10`은 마지막 실제 확인에서 429/1310이었으므로 지정 대체 Codex `%12`가 단독 구현자다. 07-A2 지원 범위의 제품 장벽 5종, A→B→C, capacity=2, 장기 관리 장애와 검증기 실패 정리를 구현했다. 조정자는 최종 이미지의 A 장벽 중 B 영상·두 음원 연속성, 60초 관리 장애, Python 4개·Node 2개 검사, 올바른 일회용 PostgreSQL의 전체 Go race·vet을 독립 확인했다. 제품·검증기 체크포인트는 `0738466`, Draft PR11은 `work/media-completion-spike`를 base로 한다. 대체 구현자는 제품·검증기 편집과 Docker 조작 중단을 명시했다.

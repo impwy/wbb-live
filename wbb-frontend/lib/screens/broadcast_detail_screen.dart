@@ -11,6 +11,7 @@ import '../media/media_platform.dart';
 import '../state/auth_controller.dart';
 import 'broadcast_form_screen.dart';
 import 'comments_panel.dart';
+import 'donations_panel.dart';
 import 'home_screen.dart' show BroadcastStatusBadge, formatBroadcastDate;
 
 /// Public detail, owner capture controls and anonymous playback.
@@ -674,6 +675,8 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                   Text(b.description),
                 ],
                 const Divider(height: 32),
+                DonationsPanel(broadcastId: b.id),
+                const SizedBox(height: 16),
                 CommentsPanel(broadcastId: b.id),
                 const SizedBox(height: 20),
               ],

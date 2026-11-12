@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../models/broadcast.dart';
 import '../models/comment.dart';
+import '../models/donation.dart';
 import '../models/live_session.dart';
 import '../models/user.dart';
 import 'http_client.dart';
@@ -413,6 +414,62 @@ class ApiClient {
       auth: true,
     );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
+  }
+
+  // -- donations -------------------------------------------------------------
+
+  /// Whether donations are enabled (test-mode payments configured).
+  Future<bool> paymentsEnabled() async {
+    final data = await _request('GET', '/payments/config');
+    return data['enabled'] == true;
+  }
+
+  Future<DonationSummary> listDonations(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/donations');
+    return DonationSummary(
+      items: (data['items'] as List<dynamic>)
+          .map((e) => Donation.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      total: (data['total'] as num).toInt(),
+      count: (data['count'] as num).toInt(),
+    );
+  }
+
+  Future<DonationOrder> createDonation(
+    String broadcastId, {
+    required int amount,
+    String message = '',
+  }) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/donations',
+      body: {'amount': amount, 'message': message},
+      auth: true,
+    );
+    final order = data['order'] as Map<String, dynamic>;
+    return DonationOrder(
+      orderId: order['orderId'] as String,
+      amount: (order['amount'] as num).toInt(),
+      orderName: order['orderName'] as String,
+      customerKey: order['customerKey'] as String,
+      clientKey: data['clientKey'] as String? ?? '',
+    );
+  }
+
+  /// Returns true when this call credited the donation, false when it had
+  /// already been credited (a repeated confirmation).
+  Future<bool> confirmDonation({
+    required String paymentKey,
+    required String orderId,
+    required int amount,
+  }) async {
+    final data = await _request(
+      'POST',
+      '/donations/confirm',
+      body: {'paymentKey': paymentKey, 'orderId': orderId, 'amount': amount},
+      auth: true,
+    );
+    return data['credited'] == true;
   }
 
   // -- comments --------------------------------------------------------------

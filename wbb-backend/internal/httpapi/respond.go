@@ -8,6 +8,7 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
 	"github.com/impwy/wbb-live/wbb-backend/internal/comments"
+	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
 )
 
@@ -89,6 +90,20 @@ func writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusForbidden, "forbidden", "Only the comment author can do this.")
 	case errors.Is(err, comments.ErrInvalidBody):
 		writeError(w, r, http.StatusBadRequest, "invalid_input", "body: must be 1 to 500 characters")
+	case errors.Is(err, donations.ErrNotConfigured):
+		writeError(w, r, http.StatusNotFound, "payments_disabled", "Donations are not enabled.")
+	case errors.Is(err, donations.ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "not_found", "Broadcast or order not found.")
+	case errors.Is(err, donations.ErrForbidden):
+		writeError(w, r, http.StatusForbidden, "forbidden", "This order belongs to another user.")
+	case errors.Is(err, donations.ErrInvalidInput):
+		writeError(w, r, http.StatusBadRequest, "invalid_input", "amount: 1000 to 1000000 KRW, message: up to 200 characters")
+	case errors.Is(err, donations.ErrMismatch):
+		writeError(w, r, http.StatusConflict, "payment_mismatch", "The payment does not match the order.")
+	case errors.Is(err, donations.ErrNotApproved):
+		writeError(w, r, http.StatusPaymentRequired, "payment_not_approved", "The payment was not approved.")
+	case errors.Is(err, donations.ErrProvider):
+		writeError(w, r, http.StatusBadGateway, "payment_provider_unavailable", "The payment provider is unavailable.")
 	case errors.Is(err, errOrigin):
 		writeError(w, r, http.StatusForbidden, "invalid_origin", "Request origin is not allowed.")
 	case errors.Is(err, errRateLimited):

@@ -8,6 +8,7 @@ import 'media/live_publisher.dart';
 import 'media/media_factory.dart';
 import 'media/media_platform.dart';
 import 'screens/home_screen.dart';
+import 'screens/donation_result_screen.dart';
 import 'screens/google_complete_screen.dart';
 import 'state/auth_controller.dart';
 
@@ -33,6 +34,16 @@ class WbbApp extends StatefulWidget {
 }
 
 class _WbbAppState extends State<WbbApp> {
+  Widget _home(Uri uri) {
+    if (uri.path == '/auth/google/complete') {
+      return GoogleCompleteScreen(error: uri.queryParameters['error']);
+    }
+    if (uri.path == '/donations/success' || uri.path == '/donations/fail') {
+      return DonationResultScreen(uri: uri);
+    }
+    return const HomeScreen();
+  }
+
   late final ApiClient _client = widget.apiClient ?? ApiClient();
   late final MediaPlatform _media =
       widget.mediaPlatform ?? createMediaPlatform();
@@ -62,11 +73,7 @@ class _WbbAppState extends State<WbbApp> {
           // Bundled Noto Sans KR (OFL) so text never falls back to CDN fonts.
           fontFamily: 'NotoSansKR',
         ),
-        home: (widget.initialUri ?? Uri.base).path == '/auth/google/complete'
-            ? GoogleCompleteScreen(
-                error: (widget.initialUri ?? Uri.base).queryParameters['error'],
-              )
-            : const HomeScreen(),
+        home: _home(widget.initialUri ?? Uri.base),
       ),
     );
   }

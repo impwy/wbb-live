@@ -7,6 +7,7 @@ import (
 
 	"github.com/impwy/wbb-live/wbb-backend/internal/auth"
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
+	"github.com/impwy/wbb-live/wbb-backend/internal/comments"
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
 )
 
@@ -82,6 +83,12 @@ func writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "session_conflict", "The broadcast session is not available for this operation.")
 	case errors.Is(err, livesessions.ErrInvalidInput):
 		writeError(w, r, http.StatusBadRequest, "invalid_input", "Invalid source or Idempotency-Key.")
+	case errors.Is(err, comments.ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "not_found", "Broadcast or comment not found.")
+	case errors.Is(err, comments.ErrForbidden):
+		writeError(w, r, http.StatusForbidden, "forbidden", "Only the comment author can do this.")
+	case errors.Is(err, comments.ErrInvalidBody):
+		writeError(w, r, http.StatusBadRequest, "invalid_input", "body: must be 1 to 500 characters")
 	case errors.Is(err, errOrigin):
 		writeError(w, r, http.StatusForbidden, "invalid_origin", "Request origin is not allowed.")
 	case errors.Is(err, errRateLimited):

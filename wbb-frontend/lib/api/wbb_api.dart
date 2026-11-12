@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../config.dart';
 import '../models/broadcast.dart';
+import '../models/comment.dart';
 import '../models/live_session.dart';
 import '../models/user.dart';
 import 'http_client.dart';
@@ -412,6 +413,39 @@ class ApiClient {
       auth: true,
     );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
+  }
+
+  // -- comments --------------------------------------------------------------
+
+  Future<List<Comment>> listComments(String broadcastId) async {
+    final data = await _request('GET', '/broadcasts/$broadcastId/comments');
+    return (data['items'] as List<dynamic>)
+        .map((e) => Comment.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Comment> createComment(String broadcastId, String body) async {
+    final data = await _request(
+      'POST',
+      '/broadcasts/$broadcastId/comments',
+      body: {'body': body},
+      auth: true,
+    );
+    return Comment.fromJson(data['comment'] as Map<String, dynamic>);
+  }
+
+  Future<Comment> updateComment(String commentId, String body) async {
+    final data = await _request(
+      'PATCH',
+      '/comments/$commentId',
+      body: {'body': body},
+      auth: true,
+    );
+    return Comment.fromJson(data['comment'] as Map<String, dynamic>);
+  }
+
+  Future<void> deleteComment(String commentId) async {
+    await _request('DELETE', '/comments/$commentId', auth: true);
   }
 
   Future<void> deleteBroadcast(String id, {required int version}) async {

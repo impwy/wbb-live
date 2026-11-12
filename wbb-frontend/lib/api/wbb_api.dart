@@ -443,10 +443,13 @@ class ApiClient {
 
   // -- donations -------------------------------------------------------------
 
-  /// Whether donations are enabled (test-mode payments configured).
-  Future<bool> paymentsEnabled() async {
+  /// Whether donations are enabled and which test payment mode is used.
+  Future<({bool enabled, String mode})> paymentsConfig() async {
     final data = await _request('GET', '/payments/config');
-    return data['enabled'] == true;
+    return (
+      enabled: data['enabled'] == true,
+      mode: data['mode'] as String? ?? 'test',
+    );
   }
 
   Future<DonationSummary> listDonations(String broadcastId) async {
@@ -477,6 +480,9 @@ class ApiClient {
       amount: (order['amount'] as num).toInt(),
       orderName: order['orderName'] as String,
       recipient: order['recipient'] as String? ?? '',
+      customerKey: order['customerKey'] as String? ?? '',
+      mode: data['mode'] as String? ?? 'test',
+      clientKey: data['clientKey'] as String? ?? '',
     );
   }
 

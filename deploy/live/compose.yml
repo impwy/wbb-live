@@ -52,6 +52,10 @@ services:
       WBB_TURN_KEY_ID: ${WBB_TURN_KEY_ID:-}
       WBB_TURN_API_TOKEN: ${WBB_TURN_API_TOKEN:-}
       WBB_RECORDINGS_DIR: /recordings
+      # Optional: Toss Payments test keys (test_ prefix only). Without them
+      # donations use the in-server test gateway.
+      WBB_TOSS_CLIENT_KEY: ${WBB_TOSS_CLIENT_KEY:-}
+      WBB_TOSS_SECRET_KEY: ${WBB_TOSS_SECRET_KEY:-}
       # Behind the proxies every client shares one RemoteAddr bucket, so the
       # per-IP budgets are global budgets here (see README).
       WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}

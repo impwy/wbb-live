@@ -11,9 +11,20 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
 )
 
-// Donations use the in-process test-mode gateway; no real payment happens.
-func newDonations(_ config.Config, db *pgxpool.Pool) *donations.Service {
+// Donations use Toss Payments in test mode when test keys are configured,
+// otherwise the in-process test gateway. No real payment happens either way.
+func newDonations(cfg config.Config, db *pgxpool.Pool) *donations.Service {
+	if cfg.TossSecretKey != "" {
+		return donations.NewService(db, donations.NewToss(cfg.TossSecretKey))
+	}
 	return donations.NewService(db, donations.NewMemoryProvider())
+}
+
+func (s *Server) paymentMode() string {
+	if s.cfg.TossSecretKey != "" {
+		return "toss"
+	}
+	return "test"
 }
 
 // SetPaymentProvider replaces the provider (tests use a fake).
@@ -21,10 +32,12 @@ func (s *Server) SetPaymentProvider(p donations.Provider) {
 	s.donations = donations.NewService(s.db, p)
 }
 
-// GET /api/v1/payments/config (public): whether donations are enabled.
+// GET /api/v1/payments/config (public): whether donations are enabled, the
+// mode ("toss" test keys or the in-server "test" gateway) and the public
+// test client key for the browser SDK.
 func (s *Server) handlePaymentsConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.donations.Enabled(), "mode": "test"})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.donations.Enabled(), "mode": s.paymentMode(), "clientKey": s.cfg.TossClientKey})
 }
 
 // POST /api/v1/payments/test-checkout (signed-in donor): the test gateway's
@@ -69,7 +82,7 @@ func (s *Server) handleCreateDonation(w http.ResponseWriter, r *http.Request) {
 		writeDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"order": order})
+	writeJSON(w, http.StatusCreated, map[string]any{"order": order, "mode": s.paymentMode(), "clientKey": s.cfg.TossClientKey})
 }
 
 // POST /api/v1/donations/confirm (signed-in donor): confirms after the

@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 | --- | --- |
 | 서비스 주소 | **https://live.wombatburrow.com** |
-| 테스트 로그인 | 로그인 화면의 **「평가용 바로 로그인」** 버튼 (비밀번호 입력 없음). 직접 회원가입도 가능 |
+| 테스트 로그인 | 로그인 화면의 **「평가용 바로 로그인」** 버튼(비밀번호 없음) 또는 아래 [시험 계정](#시험-계정-이메일-로그인)(평가자 1·방송자 3·시청자 3) |
 | 지원 브라우저 | PC 송출: Chrome·Edge 최신 버전(탭/시스템 소리 공유는 Chromium 계열 기능) / 모바일 송출: 카메라·마이크 권한을 지원하는 최신 모바일 Chrome·Safari / 시청: 최신 PC·모바일 브라우저 |
 | 기술 스택 | Go API · Flutter Web · PostgreSQL · Redis · MediaMTX(WebRTC WHIP 수신, LL-HLS 배포) · FFmpeg |
 
@@ -24,18 +24,36 @@
 | AUTH-02 | `requireAuth` 미들웨어, 공개 목록·재생 | `TestBroadcastCreateRequiresAuth`, `TestWHIPRejectsUnauthorisedPublication` | ✅ |
 | AUTH-03 | `broadcasts.checkOwner`, `livesessions` 소유자 검사 | `TestBroadcastOwnershipMatrix`, `TestEvaluationLoginPublicAuthAndOwnership` | ✅ |
 | COMMENT-01·02 | `internal/comments`, `lib/screens/comments_panel.dart` | `TestCommentsCRUDAndAuthorAuthorization`(타인 403·비로그인 401) | ✅ |
-| DONATION-01~03 | `internal/donations`(서버 내장 테스트 결제 게이트웨이), `lib/screens/donations_panel.dart` | `TestDonationsVerifyApprovalAndCreditOnce`(위조 금액·타인 거절, 중복 승인 1회 적립, 합계) | ✅ |
+| DONATION-01~03 | `internal/donations`(토스페이먼츠 테스트 모드 `toss.go`, 서버 내장 테스트 게이트웨이 `memory.go`), `lib/screens/donations_panel.dart` | `TestDonationsVerifyApprovalAndCreditOnce`, `TestDonationsWithTossProvider`(위조 금액·타인 거절, 중복 승인 1회 적립, 합계) | ✅ |
 | VOD-01~03 | `internal/mediaworker`(MP4 녹화), `internal/recordings`, `lib/screens/recording_screen.dart` | `TestRecordingsRegisterListAndServe`(위치·메타데이터 저장, 재시작 후 조회, Range 재생) | ✅ |
 
 선택 기능 상세 근거: [docs/verification/optional-features.md](docs/verification/optional-features.md). 필수 기능 진행 기록: [docs/verification/required-implementation-status.md](docs/verification/required-implementation-status.md).
 
-## 평가용 로그인
+## 테스트 계정과 평가용 로그인
+
+### 평가용 바로 로그인 (비밀번호 없음)
 
 1. https://live.wombatburrow.com 접속 → 오른쪽 위 **로그인**.
-2. **평가용 바로 로그인**을 누르면 서버에 미리 준비한 평가 전용 계정으로 로그인됩니다.
-3. 평가 계정은 여러 심사자가 공유합니다. 같은 평가 계정으로 로그인한 사람끼리는 서로의 방송을 수정·삭제·중지할 수 있습니다. 소유자 권한을 확인하려면 **회원가입**으로 두 번째 계정을 만들어 비교해 주세요(아래 "권한 확인").
+2. 맨 위 **평가용 바로 로그인**을 누르면 서버에 미리 준비한 평가 전용 계정("평가자")으로 로그인됩니다.
+3. 이 계정은 여러 심사자가 공유하므로, 같은 계정끼리는 서로의 방송을 수정·삭제·중지할 수 있습니다.
 
-평가 로그인은 서버 환경변수로 켤 때만 버튼과 API(`POST /api/v1/auth/evaluation-login`)가 활성화됩니다. 실제 계정 비밀번호는 서버 비밀 설정에만 있고 저장소·응답·로그에 없습니다.
+평가 로그인은 서버 환경변수로 켤 때만 버튼과 API(`POST /api/v1/auth/evaluation-login`)가 활성화되며, 그 계정의 비밀번호는 서버 비밀 설정에만 있습니다.
+
+### 시험 계정 (이메일 로그인)
+
+로그인 화면의 이메일·비밀번호로 로그인합니다. 시연 전용 계정이며 실제 개인 정보·비밀번호가 아닙니다. 역할은 시연 용도의 이름이고 권한은 모두 일반 회원과 같습니다(누구나 방송 등록 가능, 자기 방송만 수정·삭제·송출 제어).
+
+| 역할 | 표시 이름 | 이메일 | 비밀번호 |
+| --- | --- | --- | --- |
+| 평가자 | 심사위원 | judge@live.wombatburrow.com | `VQVHPlvdxKMH5cAC` |
+| 방송자 | 방송자1 | streamer1@live.wombatburrow.com | `QP9gwJMAgfkNIBQA` |
+| 방송자 | 방송자2 | streamer2@live.wombatburrow.com | `HWN1N6OoiDksnhSl` |
+| 방송자 | 방송자3 | streamer3@live.wombatburrow.com | `dexESJmbkvlBrW4C` |
+| 시청자 | 시청자1 | viewer1@live.wombatburrow.com | `LqIVvadJPHpfxYw` |
+| 시청자 | 시청자2 | viewer2@live.wombatburrow.com | `c2QXk8gvpHqbRblt` |
+| 시청자 | 시청자3 | viewer3@live.wombatburrow.com | `gHFOrPrrg3vaGkC` |
+
+권한 확인 예: **방송자1**로 방송을 만들고, 다른 브라우저(또는 시크릿 창)에서 **시청자1**로 로그인해 같은 방송을 열면 수정·삭제·송출 버튼이 없고, API로 시도해도 서버가 `403`으로 거절합니다. 로그인하지 않은 창에서는 목록·상세·시청만 가능합니다.
 
 ## 기능 확인 절차
 
@@ -90,12 +108,12 @@
 
 ### 선택 기능: 도네이션 (DONATION-01~03)
 
-결제는 **서버에 내장한 테스트 결제 모듈**(메모리 기반 테스트 게이트웨이)로 진행하며 실제 금액은 청구되지 않습니다.
+결제는 **토스페이먼츠 테스트 모드**로 진행하며 실제 금액은 청구되지 않습니다. 서버에 토스 테스트 키(`test_` 접두사만 허용)가 없으면 같은 흐름을 **서버 내장 테스트 결제 모듈**로 진행합니다.
 
 1. 로그인 후 방송 상세의 **후원하기**에서 금액(1,000~1,000,000원)과 메시지를 고릅니다. 서버가 후원 대상(방송 소유자)과 금액을 고정한 주문을 PostgreSQL에 만듭니다.
-2. **테스트 결제창**에서 **결제 승인**(또는 결제 실패 처리)을 누르면 테스트 게이트웨이가 저장된 주문 금액으로 결제 키를 발급합니다. 클라이언트가 보낸 금액은 사용하지 않습니다.
-3. 서버가 게이트웨이에 승인을 요청하고, 결과(`DONE`, 주문번호, 금액)를 주문과 대조한 뒤에만 후원을 확정합니다. 금액·주문·후원자가 다르면 거절합니다.
-4. 완료 창의 **승인 통지 다시 보내기**로 같은 승인 통지를 반복해도 주문 단위로 한 번만 적립되는 것을 확인할 수 있습니다(`POST /donations/confirm` 반복, `POST /payments/webhook` 재전송 모두 멱등).
+2. **토스 테스트 결제창**에서 테스트 카드로 결제하면 사이트로 돌아옵니다(서버 내장 모드에서는 앱 안의 테스트 결제창에서 **결제 승인**).
+3. 서버가 결제 서비스에 승인을 요청하고, 결과(`DONE`, 주문번호, 금액)를 저장된 주문과 대조한 뒤에만 후원을 확정합니다. 금액·주문·후원자가 다르면 거절합니다.
+4. 같은 승인 통지가 반복되어도(결과 페이지 새로고침, `POST /donations/confirm` 반복, `POST /payments/webhook` 재전송) 주문 단위로 한 번만 적립합니다. 웹훅은 본문을 믿지 않고 결제 서비스에서 다시 조회합니다.
 5. 방송 상세에 방송별 후원 내역과 합계가 표시됩니다.
 
 ### 선택 기능: 녹화·다시보기 (VOD-01~03)
@@ -181,6 +199,7 @@ make ci               # vet, test, flutter analyze/test/build
 | `WBB_EVAL_LOGIN_ENABLED/EMAIL/PASSWORD` | 평가용 바로 로그인 (세 값 모두 설정 또는 모두 미설정) |
 | `WBB_GOOGLE_CLIENT_ID/SECRET/CALLBACK_URI` | Google 로그인(선택, 세 값 모두 필요) |
 | `WBB_ICE_HOSTS`, `WBB_ICE_PORT` | 브라우저에 알릴 WebRTC 후보 주소와 포트 (deploy/live) |
+| `WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY` | 선택. 토스페이먼츠 테스트 키(`test_` 접두사만 허용, 둘 다 또는 둘 다 미설정). 미설정 시 서버 내장 테스트 결제 |
 | `WBB_RECORDINGS_DIR` | 선택. 녹화 저장 경로(worker 쓰기, API 읽기 전용). 미설정 시 녹화·다시보기 비활성 |
 | `WBB_TURN_KEY_ID`, `WBB_TURN_API_TOKEN` | 선택. Cloudflare TURN 키. 설정하면 방송자 브라우저가 단기 TURN 자격(`GET /api/v1/media/ice-servers`, 로그인 필요)으로 미디어를 중계해, ICE 포트를 열 수 없는 환경에서도 송출됩니다 |
 
@@ -233,7 +252,7 @@ media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결
 | GET `/broadcasts/{id}/comments` | 공개 | 최근 댓글(오래된 순) |
 | POST `/broadcasts/{id}/comments` | 로그인 | `{body}` 1~500자 |
 | PATCH·DELETE `/comments/{id}` | 작성자 | 다른 사용자 403 |
-| GET `/payments/config` | 공개 | `{enabled, mode:"test"}` |
+| GET `/payments/config` | 공개 | `{enabled, mode:"toss"|"test", clientKey}` (테스트 키만) |
 | POST `/broadcasts/{id}/donations` | 로그인 | 주문 생성 `{amount, message}` → `{order}` |
 | POST `/payments/test-checkout` | 주문한 후원자 | 테스트 결제창: `{orderId, approve}` → 결제 키(저장된 금액) |
 | POST `/donations/confirm` | 주문한 후원자 | 결제사 승인·금액·대상 검증 후 확정, 반복 호출 시 중복 적립 없음 |

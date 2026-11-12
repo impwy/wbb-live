@@ -9,8 +9,8 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
 	"github.com/impwy/wbb-live/wbb-backend/internal/comments"
 	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
-	"github.com/impwy/wbb-live/wbb-backend/internal/recordings"
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
+	"github.com/impwy/wbb-live/wbb-backend/internal/recordings"
 )
 
 // apiError is the public error envelope (docs/design.md §5):

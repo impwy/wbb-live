@@ -5,13 +5,15 @@ import 'package:provider/provider.dart';
 
 import '../api/wbb_api.dart';
 import '../models/broadcast.dart';
+import '../models/recording.dart';
 import '../state/auth_controller.dart';
 import 'broadcast_detail_screen.dart';
 import 'broadcast_form_screen.dart';
 import 'login_screen.dart';
 import 'my_broadcasts_screen.dart';
+import 'recording_screen.dart';
 
-enum HomeFilter { all, live }
+enum HomeFilter { all, live, replay }
 
 /// Public broadcast list (works signed out). Live broadcasts can be filtered
 /// and the first page refreshes periodically so new LIVE states appear.
@@ -25,6 +27,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<Broadcast> _items = [];
+  List<Recording> _recordings = [];
   String _nextCursor = '';
   bool _loading = true;
   bool _pagedFurther = false;
@@ -68,6 +71,18 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
     try {
+      if (_filter == HomeFilter.replay) {
+        final items = await context.read<ApiClient>().listRecordings();
+        if (!mounted || epoch != _loadEpoch) return;
+        setState(() {
+          _recordings = items;
+          _items = [];
+          _nextCursor = '';
+          _loading = false;
+          _error = null;
+        });
+        return;
+      }
       final page = await context.read<ApiClient>().listBroadcasts(
         cursor: more && _nextCursor.isNotEmpty ? _nextCursor : null,
         liveOnly: _filter == HomeFilter.live,
@@ -226,6 +241,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       selected: _filter == HomeFilter.live,
                       onSelected: (_) => _setFilter(HomeFilter.live),
                     ),
+                    ChoiceChip(
+                      key: const Key('home-filter-replay'),
+                      avatar: const Icon(
+                        Icons.video_library_outlined,
+                        size: 16,
+                      ),
+                      label: const Text('다시보기'),
+                      selected: _filter == HomeFilter.replay,
+                      onSelected: (_) => _setFilter(HomeFilter.replay),
+                    ),
                   ],
                 ),
               ),
@@ -239,6 +264,44 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<Widget> _body(BuildContext context) {
+    if (_filter == HomeFilter.replay && !_loading && _error == null) {
+      if (_recordings.isEmpty) {
+        return const [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: Text('아직 다시보기 영상이 없습니다.')),
+            ),
+          ),
+        ];
+      }
+      return [
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverList.builder(
+            itemCount: _recordings.length,
+            itemBuilder: (context, index) {
+              final r = _recordings[index];
+              return Card(
+                key: Key('recording-card-${r.id}'),
+                child: ListTile(
+                  leading: const Icon(Icons.play_circle_fill, size: 40),
+                  title: Text(r.broadcastTitle),
+                  subtitle: Text(
+                    '${r.ownerName} · ${formatBroadcastDate(r.startedAt)} · ${r.durationLabel}',
+                  ),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => RecordingScreen(recordingId: r.id),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ];
+    }
     if (_loading && _items.isEmpty) {
       return const [
         SliverFillRemaining(

@@ -9,6 +9,7 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/broadcasts"
 	"github.com/impwy/wbb-live/wbb-backend/internal/comments"
 	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
+	"github.com/impwy/wbb-live/wbb-backend/internal/recordings"
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
 )
 
@@ -104,6 +105,8 @@ func writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusPaymentRequired, "payment_not_approved", "The payment was not approved.")
 	case errors.Is(err, donations.ErrProvider):
 		writeError(w, r, http.StatusBadGateway, "payment_provider_unavailable", "The payment provider is unavailable.")
+	case errors.Is(err, recordings.ErrNotFound):
+		writeError(w, r, http.StatusNotFound, "not_found", "Recording not found.")
 	case errors.Is(err, errOrigin):
 		writeError(w, r, http.StatusForbidden, "invalid_origin", "Request origin is not allowed.")
 	case errors.Is(err, errRateLimited):

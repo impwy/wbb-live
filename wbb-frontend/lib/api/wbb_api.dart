@@ -7,6 +7,7 @@ import '../config.dart';
 import '../models/broadcast.dart';
 import '../models/comment.dart';
 import '../models/donation.dart';
+import '../models/recording.dart';
 import '../models/live_session.dart';
 import '../models/user.dart';
 import 'http_client.dart';
@@ -415,6 +416,29 @@ class ApiClient {
     );
     return Broadcast.fromJson(data['broadcast'] as Map<String, dynamic>);
   }
+
+  // -- recordings (replays) ---------------------------------------------------
+
+  Future<List<Recording>> listRecordings({String? broadcastId}) async {
+    final data = await _request(
+      'GET',
+      broadcastId == null
+          ? '/recordings'
+          : '/broadcasts/$broadcastId/recordings',
+    );
+    return (data['items'] as List<dynamic>)
+        .map((e) => Recording.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Recording> getRecording(String id) async {
+    final data = await _request('GET', '/recordings/$id');
+    return Recording.fromJson(data['recording'] as Map<String, dynamic>);
+  }
+
+  /// Absolute URL of the recording's MP4 (public, Range-capable).
+  String recordingMediaUrl(String id) =>
+      Uri.base.resolve('$_baseUrl/recordings/$id/media').toString();
 
   // -- donations -------------------------------------------------------------
 

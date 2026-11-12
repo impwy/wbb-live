@@ -41,6 +41,16 @@ pathDefaults:
   overridePublisher: false
   record: false
 paths:
-  "~^wbb/[0-9a-f-]+/[0-9]+/(source|720p)$":
+  "~^wbb/[0-9a-f-]+/[0-9]+/source$":
     source: publisher
     overridePublisher: false
+  # The transcoded 720p output is recorded for replays (VOD).
+  "~^wbb/[0-9a-f-]+/[0-9]+/720p$":
+    source: publisher
+    overridePublisher: false
+    record: true
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 0s

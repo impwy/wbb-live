@@ -23,6 +23,7 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/livesessions"
 	"github.com/impwy/wbb-live/wbb-backend/internal/mediacompletion"
 	"github.com/impwy/wbb-live/wbb-backend/internal/platform/db"
+	"github.com/impwy/wbb-live/wbb-backend/internal/recordings"
 )
 
 // Server wires modules into HTTP routes.
@@ -40,6 +41,7 @@ type Server struct {
 	completion   *mediacompletion.Client
 	comments     *comments.Service
 	donations    *donations.Service
+	recordings   *recordings.Service
 
 	// rateLimitClock is injectable so tests can pin the fixed-window bucket;
 	// production uses time.Now.
@@ -58,12 +60,13 @@ func NewServer(cfg config.Config, authSvc *auth.Service, bcastSvc *broadcasts.Se
 	if cfg.MediaCompletionURL != "" {
 		completion, _ = mediacompletion.NewClient(cfg.MediaCompletionURL, cfg.MediaCompletionKey, cfg.MediaCompletionRoot, cfg.MediaCompletionSlot)
 	}
-	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), turnClient: &http.Client{Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, completion: completion, comments: comments.NewService(dbPool), donations: newDonations(cfg, dbPool)}
+	return &Server{cfg: cfg, auth: authSvc, broadcasts: bcastSvc, sessions: sessions, redis: rdb, db: dbPool, log: log, rateLimitClock: time.Now, googleClient: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, mediaClient: privateMediaClient(), turnClient: &http.Client{Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, completion: completion, comments: comments.NewService(dbPool), donations: newDonations(cfg, dbPool), recordings: recordings.NewService(dbPool, cfg.RecordingsDir)}
 }
 
 // RunMaintenance reconciles durable preparation timeouts independently of
 // public reads and Redis. The caller owns cancellation on server shutdown.
 func (s *Server) RunMaintenance(ctx context.Context) {
+	go s.recordings.Run(ctx, func(err error) { s.log.Error("recording scan", "error", err) })
 	s.sessions.RunMaintenance(ctx, func(err error) { s.log.Error("session maintenance", "error", err) })
 }
 
@@ -120,6 +123,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/donations", s.requireAuth(requireOrigin(s, s.handleCreateDonation)))
 	mux.HandleFunc("POST /api/v1/donations/confirm", s.requireAuth(requireOrigin(s, s.handleConfirmDonation)))
 	mux.HandleFunc("POST /api/v1/payments/webhook", s.handlePaymentWebhook)
+	mux.HandleFunc("GET /api/v1/recordings", s.handleListRecordings)
+	mux.HandleFunc("GET /api/v1/recordings/{rid}", s.handleGetRecording)
+	mux.HandleFunc("GET /api/v1/recordings/{rid}/media", s.handleRecordingMedia)
+	mux.HandleFunc("GET /api/v1/broadcasts/{id}/recordings", s.handleBroadcastRecordings)
 	mux.HandleFunc("GET /internal/hls-authorize", s.handleHLSAuthorize)
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/stop", s.requireAuth(requireOrigin(s, s.handleStopSession)))
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/sessions/{sid}/publish-grants", s.requireAuth(requireOrigin(s, s.handleRenewGrant)))

@@ -54,12 +54,15 @@ services:
       # Optional donations: Toss Payments test-mode keys (test_ prefix only).
       WBB_TOSS_CLIENT_KEY: ${WBB_TOSS_CLIENT_KEY:-}
       WBB_TOSS_SECRET_KEY: ${WBB_TOSS_SECRET_KEY:-}
+      WBB_RECORDINGS_DIR: /recordings
       # Behind the proxies every client shares one RemoteAddr bucket, so the
       # per-IP budgets are global budgets here (see README).
       WBB_RATE_LIMIT_REQUESTS: ${WBB_RATE_LIMIT_REQUESTS:-300}
       WBB_RATE_LIMIT_ACCOUNT_REQUESTS: ${WBB_RATE_LIMIT_ACCOUNT_REQUESTS:-20}
       WBB_EVAL_LOGIN_IP_LIMIT: ${WBB_EVAL_LOGIN_IP_LIMIT:-60}
       WBB_EVAL_LOGIN_ACCOUNT_LIMIT: ${WBB_EVAL_LOGIN_ACCOUNT_LIMIT:-30}
+    volumes:
+      - recordings:/recordings:ro
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -87,6 +90,7 @@ services:
     volumes:
       - ./anchor.json:/live/anchor.json:ro
       - completion-state:/live/state
+      - recordings:/recordings
       - ./mediamtx.yml:/live/mediamtx.yml:ro
     command: ["/live/mediamtx.yml"]
     ports:
@@ -140,6 +144,7 @@ services:
 networks:
   private: {driver: bridge}
 volumes:
+  recordings:
   pg-data:
   worker-lock:
   edge-data:

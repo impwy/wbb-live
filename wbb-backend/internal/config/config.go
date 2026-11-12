@@ -49,6 +49,7 @@ type Config struct {
 	TURNCredentialTTL           time.Duration // lifetime of issued TURN credentials
 	TossClientKey               string        // Toss Payments test client key (browser)
 	TossSecretKey               string        // Toss Payments test secret key (server only)
+	RecordingsDir               string        // read-only MediaMTX recordings root; empty disables replays
 
 	RateLimitRequests int64
 	// Per-account limit for register/login/refresh in addition to the per-IP
@@ -88,6 +89,7 @@ func Load() (Config, error) {
 		TURNCredentialTTL:           12 * time.Hour,
 		TossClientKey:               os.Getenv("WBB_TOSS_CLIENT_KEY"),
 		TossSecretKey:               os.Getenv("WBB_TOSS_SECRET_KEY"),
+		RecordingsDir:               os.Getenv("WBB_RECORDINGS_DIR"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("WBB_DATABASE_URL is required")

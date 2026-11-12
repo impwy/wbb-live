@@ -383,8 +383,10 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
       'ended' => '방송이 종료되었습니다.',
       _ => '아직 방송을 시작하지 않았습니다.',
     };
+    // Keep owner controls and status within the first screen on phones.
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.45;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 960),
+      constraints: BoxConstraints(maxWidth: maxHeight * 16 / 9),
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: Container(
@@ -472,6 +474,97 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
               children: [
                 Center(child: _stage(context, state)),
                 const SizedBox(height: 12),
+                Row(
+                  children: [
+                    BroadcastStatusBadge(status: state),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        b.title,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '상태: ${_statusLabel(state)}',
+                  key: const Key('session-state'),
+                ),
+                const SizedBox(height: 8),
+                if (state == 'starting')
+                  const Text('회차를 준비 중입니다. 영상 준비 전에는 시청할 수 없습니다.'),
+                if (state == 'stopping')
+                  const Text('종료 처리 중입니다. 잠시 후 상태를 새로고침해 주세요.'),
+                if (owner)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (state == 'ready' || state == 'ended') ...[
+                        FilledButton.icon(
+                          key: const Key('session-prepare'),
+                          onPressed: _acting || publisher!.busy
+                              ? null
+                              : () => _prepare(PublishSource.screen),
+                          icon: const Icon(Icons.screen_share_outlined),
+                          label: const Text('화면 공유 시작'),
+                        ),
+                        FilledButton.icon(
+                          key: const Key('session-prepare-camera'),
+                          onPressed: _acting || publisher!.busy
+                              ? null
+                              : () => _prepare(PublishSource.camera),
+                          icon: const Icon(Icons.videocam_outlined),
+                          label: const Text('카메라·마이크 시작'),
+                        ),
+                      ],
+                      if (publisher!.busy ||
+                          state == 'starting' ||
+                          state == 'live')
+                        OutlinedButton.icon(
+                          key: const Key('session-cancel'),
+                          onPressed: _canceling ? null : _cancel,
+                          icon: const Icon(Icons.stop_circle_outlined),
+                          label: const Text('방송 중지'),
+                        ),
+                    ],
+                  ),
+                if (owner && publisher!.broadcastId == widget.broadcastId) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '송출: ${_publishLabel(publisher.phase)}',
+                    key: const Key('publish-phase'),
+                  ),
+                  if (publisher.message != null) Text(publisher.message!),
+                  if (publisher.source == PublishSource.screen &&
+                      !publisher.sharedAudio)
+                    const Text('공유 소리가 없습니다. 소리를 포함한 탭을 다시 선택해 주세요.'),
+                  if (!publisher.audioRunning && publisher.busy)
+                    OutlinedButton(
+                      key: const Key('publish-resume-audio'),
+                      onPressed: _resumeAudio,
+                      child: const Text('오디오 다시 시작'),
+                    ),
+                  if (publisher.audioRunning &&
+                      publisher.phase == PublishPhase.publishing)
+                    const Text('오디오 실행 중', key: Key('publish-audio-running')),
+                  if (publisher.preview != null) ...[
+                    const SizedBox(height: 8),
+                    const Text('송출 미리보기'),
+                    SizedBox(height: 240, child: publisher.preview),
+                  ],
+                ],
+                if (owner && (state == 'ready' || state == 'ended')) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'PC: 화면 공유 창에서 탭(또는 전체 화면)과 "소리 공유"를 선택하고 마이크를 허용하세요. '
+                    '휴대폰: 카메라·마이크 권한을 허용하세요.',
+                  ),
+                ],
+                if (_actionError != null)
+                  Text(_actionError!, key: const Key('session-action-error')),
+                const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -514,25 +607,7 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                 const SizedBox(height: 4),
                 Text(_playbackStatus, key: const Key('playback-status')),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    BroadcastStatusBadge(status: state),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        b.title,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
                 Text('방송자: ${b.ownerDisplayName}'),
-                const SizedBox(height: 4),
-                Text(
-                  '상태: ${_statusLabel(state)}',
-                  key: const Key('session-state'),
-                ),
                 const SizedBox(height: 4),
                 Text('방송 등록: ${formatBroadcastDate(b.createdAt)}'),
                 if (session != null)
@@ -547,76 +622,6 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                   Text(b.description),
                 ],
                 const SizedBox(height: 20),
-                if (owner) ...[
-                  Text(
-                    '방송 송출',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (state == 'starting')
-                  const Text('회차를 준비 중입니다. 영상 준비 전에는 시청할 수 없습니다.'),
-                if (state == 'stopping')
-                  const Text('종료 처리 중입니다. 잠시 후 상태를 새로고침해 주세요.'),
-                if (owner && (state == 'ready' || state == 'ended')) ...[
-                  FilledButton.icon(
-                    key: const Key('session-prepare'),
-                    onPressed: _acting || publisher!.busy
-                        ? null
-                        : () => _prepare(PublishSource.screen),
-                    icon: const Icon(Icons.screen_share_outlined),
-                    label: const Text('화면 공유 시작'),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    key: const Key('session-prepare-camera'),
-                    onPressed: _acting || publisher!.busy
-                        ? null
-                        : () => _prepare(PublishSource.camera),
-                    icon: const Icon(Icons.videocam_outlined),
-                    label: const Text('카메라·마이크 시작'),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'PC: 화면 공유 창에서 탭(또는 전체 화면)과 "소리 공유"를 선택하고 마이크를 허용하세요. '
-                    '휴대폰: 카메라·마이크 권한을 허용하세요.',
-                  ),
-                ],
-                if (owner &&
-                    (publisher!.busy || state == 'starting' || state == 'live'))
-                  OutlinedButton.icon(
-                    key: const Key('session-cancel'),
-                    onPressed: _canceling ? null : _cancel,
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    label: const Text('방송 중지'),
-                  ),
-                if (owner && publisher!.broadcastId == widget.broadcastId) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    '송출: ${_publishLabel(publisher.phase)}',
-                    key: const Key('publish-phase'),
-                  ),
-                  if (publisher.message != null) Text(publisher.message!),
-                  if (publisher.source == PublishSource.screen &&
-                      !publisher.sharedAudio)
-                    const Text('공유 소리가 없습니다. 소리를 포함한 탭을 다시 선택해 주세요.'),
-                  if (!publisher.audioRunning && publisher.busy)
-                    OutlinedButton(
-                      key: const Key('publish-resume-audio'),
-                      onPressed: _resumeAudio,
-                      child: const Text('오디오 다시 시작'),
-                    ),
-                  if (publisher.audioRunning &&
-                      publisher.phase == PublishPhase.publishing)
-                    const Text('오디오 실행 중', key: Key('publish-audio-running')),
-                  if (publisher.preview != null) ...[
-                    const SizedBox(height: 8),
-                    const Text('송출 미리보기'),
-                    SizedBox(height: 240, child: publisher.preview),
-                  ],
-                ],
-                if (_actionError != null)
-                  Text(_actionError!, key: const Key('session-action-error')),
               ],
             ),
     );

@@ -14,6 +14,7 @@ import 'chat_panel.dart';
 import 'comments_panel.dart';
 import 'donations_panel.dart';
 import 'recording_screen.dart';
+import '../ui/visuals.dart';
 import 'home_screen.dart' show BroadcastStatusBadge, formatBroadcastDate;
 
 /// Public detail, owner capture controls and anonymous playback.
@@ -408,8 +409,9 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
       'ended' => '방송이 종료되었습니다.',
       _ => '아직 방송을 시작하지 않았습니다.',
     };
-    // Keep owner controls and status within the first screen on phones.
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.45;
+    // Large on desktop; on phones keep owner controls in the first screen.
+    final size = MediaQuery.sizeOf(context);
+    final maxHeight = size.height * (size.width >= 1000 ? 0.62 : 0.45);
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxHeight * 16 / 9),
       child: AspectRatio(
@@ -534,21 +536,56 @@ class _BroadcastDetailScreenState extends State<BroadcastDetailScreen>
                 ),
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    BroadcastStatusBadge(status: state),
-                    const SizedBox(width: 8),
+                    ChannelAvatar(
+                      seed: b.ownerId,
+                      name: b.ownerDisplayName,
+                      size: 52,
+                      live: state == 'live',
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: Text(
-                        b.title,
-                        style: Theme.of(context).textTheme.headlineSmall,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            b.title,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  b.ownerDisplayName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: WbbColors.accent,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              BroadcastStatusBadge(status: state),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '상태: ${_statusLabel(state)}',
+                            key: const Key('session-state'),
+                            style: const TextStyle(
+                              color: WbbColors.muted,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '상태: ${_statusLabel(state)}',
-                  key: const Key('session-state'),
                 ),
                 const SizedBox(height: 8),
                 if (state == 'starting')

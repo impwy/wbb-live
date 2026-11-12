@@ -12,6 +12,8 @@ import 'broadcast_form_screen.dart';
 import 'login_screen.dart';
 import 'my_broadcasts_screen.dart';
 import 'recording_screen.dart';
+import 'signup_screen.dart';
+import '../ui/visuals.dart';
 
 enum HomeFilter { all, live, replay }
 
@@ -142,6 +144,25 @@ class _HomeScreenState extends State<HomeScreen> {
     if (created == true && mounted) _load();
   }
 
+  Future<void> _openRecording(Recording r) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordingScreen(recordingId: r.id),
+      ),
+    );
+  }
+
+  Future<void> _logout() async {
+    try {
+      await context.read<AuthController>().logout();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('로그아웃 실패: ${e.message}')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
@@ -154,15 +175,34 @@ class _HomeScreenState extends State<HomeScreen> {
         context.read<AuthController>().clearSessionExpired();
       });
     }
+    final signedIn = auth.status == AuthStatus.authenticated;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('WBB Live'),
+        titleSpacing: 16,
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.live_tv_rounded, color: WbbColors.accent),
+            SizedBox(width: 8),
+            Text('WBB Live'),
+          ],
+        ),
         actions: [
-          if (auth.status == AuthStatus.authenticated) ...[
+          if (auth.status != AuthStatus.unknown)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.tonalIcon(
+                key: const Key('home-create'),
+                onPressed: _create,
+                icon: const Icon(Icons.videocam, size: 18),
+                label: const Text('방송하기'),
+              ),
+            ),
+          if (signedIn) ...[
             IconButton(
               key: const Key('home-my-broadcasts'),
               tooltip: '내 방송',
-              icon: const Icon(Icons.videocam_outlined),
+              icon: const Icon(Icons.video_library_outlined),
               onPressed: () async {
                 await Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -174,132 +214,241 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Center(child: Text(auth.user?.displayName ?? '')),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                children: [
+                  ChannelAvatar(
+                    seed: auth.user?.id ?? '',
+                    name: auth.user?.displayName ?? '',
+                    size: 28,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(auth.user?.displayName ?? ''),
+                ],
+              ),
             ),
             IconButton(
               key: const Key('home-logout'),
               tooltip: '로그아웃',
               icon: const Icon(Icons.logout),
-              onPressed: () async {
-                try {
-                  await context.read<AuthController>().logout();
-                } on ApiException catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('로그아웃 실패: ${e.message}')),
-                    );
-                  }
-                }
-              },
+              onPressed: _logout,
             ),
-          ] else if (auth.status == AuthStatus.unauthenticated)
+            const SizedBox(width: 4),
+          ] else if (auth.status == AuthStatus.unauthenticated) ...[
             TextButton(
-              key: const Key('home-login'),
+              key: const Key('home-signup'),
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+                MaterialPageRoute<void>(builder: (_) => const SignupScreen()),
               ),
-              child: const Text('로그인'),
+              child: const Text('회원가입'),
             ),
+            Padding(
+              padding: const EdgeInsets.only(right: 12, left: 4),
+              child: FilledButton(
+                key: const Key('home-login'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
+                ),
+                child: const Text('로그인'),
+              ),
+            ),
+          ],
         ],
       ),
-      floatingActionButton: auth.status == AuthStatus.unknown
-          ? null
-          : FloatingActionButton.extended(
-              key: const Key('home-create'),
-              onPressed: _create,
-              icon: const Icon(Icons.add),
-              label: const Text('방송 등록'),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 1000;
+          final content = RefreshIndicator(
+            onRefresh: () => _load(),
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: _tabs()),
+                ..._body(context),
+                const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              ],
             ),
-      body: RefreshIndicator(
-        onRefresh: () => _load(),
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    ChoiceChip(
-                      key: const Key('home-filter-all'),
-                      label: const Text('전체 방송'),
-                      selected: _filter == HomeFilter.all,
-                      onSelected: (_) => _setFilter(HomeFilter.all),
-                    ),
-                    ChoiceChip(
-                      key: const Key('home-filter-live'),
-                      avatar: const Icon(
-                        Icons.circle,
-                        size: 10,
-                        color: Colors.red,
-                      ),
-                      label: const Text('방송 중'),
-                      selected: _filter == HomeFilter.live,
-                      onSelected: (_) => _setFilter(HomeFilter.live),
-                    ),
-                    ChoiceChip(
-                      key: const Key('home-filter-replay'),
-                      avatar: const Icon(
-                        Icons.video_library_outlined,
-                        size: 16,
-                      ),
-                      label: const Text('다시보기'),
-                      selected: _filter == HomeFilter.replay,
-                      onSelected: (_) => _setFilter(HomeFilter.replay),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            ..._body(context),
-            const SliverToBoxAdapter(child: SizedBox(height: 88)),
-          ],
-        ),
+          );
+          if (!wide) return content;
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: 240, child: _sidebar()),
+              const VerticalDivider(width: 1),
+              Expanded(child: content),
+            ],
+          );
+        },
       ),
     );
   }
 
-  List<Widget> _body(BuildContext context) {
-    if (_filter == HomeFilter.replay && !_loading && _error == null) {
-      if (_recordings.isEmpty) {
-        return const [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: Text('아직 다시보기 영상이 없습니다.')),
+  Widget _tabs() {
+    Widget tab(HomeFilter f, Key key, String label, IconData icon) {
+      final selected = _filter == f;
+      return ChoiceChip(
+        key: key,
+        avatar: Icon(
+          icon,
+          size: 16,
+          color: f == HomeFilter.live ? WbbColors.live : null,
+        ),
+        label: Text(label),
+        selected: selected,
+        showCheckmark: false,
+        onSelected: (_) => _setFilter(f),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          tab(
+            HomeFilter.all,
+            const Key('home-filter-all'),
+            '전체 방송',
+            Icons.grid_view_rounded,
+          ),
+          tab(
+            HomeFilter.live,
+            const Key('home-filter-live'),
+            '방송 중',
+            Icons.circle,
+          ),
+          tab(
+            HomeFilter.replay,
+            const Key('home-filter-replay'),
+            '다시보기',
+            Icons.video_library_outlined,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Desktop sidebar: channels that are live in the loaded list.
+  Widget _sidebar() {
+    final live = _items.where((b) => b.status == 'live').toList();
+    return Container(
+      color: WbbColors.surface,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Text(
+              '지금 방송 중',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
             ),
           ),
-        ];
-      }
-      return [
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverList.builder(
-            itemCount: _recordings.length,
-            itemBuilder: (context, index) {
-              final r = _recordings[index];
-              return Card(
-                key: Key('recording-card-${r.id}'),
-                child: ListTile(
-                  leading: const Icon(Icons.play_circle_fill, size: 40),
-                  title: Text(r.broadcastTitle),
-                  subtitle: Text(
-                    '${r.ownerName} · ${formatBroadcastDate(r.startedAt)} · ${r.durationLabel}',
-                  ),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => RecordingScreen(recordingId: r.id),
-                    ),
-                  ),
+          if (live.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                '방송 중인 채널이 없습니다.',
+                style: TextStyle(color: WbbColors.muted, fontSize: 13),
+              ),
+            ),
+          for (final b in live)
+            InkWell(
+              key: Key('sidebar-${b.id}'),
+              onTap: () => _open(b),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
                 ),
-              );
-            },
-          ),
-        ),
+                child: Row(
+                  children: [
+                    ChannelAvatar(
+                      seed: b.ownerId,
+                      name: b.ownerDisplayName,
+                      size: 30,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            b.ownerDisplayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                          Text(
+                            b.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: WbbColors.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.circle, size: 8, color: WbbColors.live),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String text) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      ),
+    ),
+  );
+
+  Widget _grid(List<Widget> cards) => SliverPadding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    sliver: SliverGrid(
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 360,
+        mainAxisSpacing: 20,
+        crossAxisSpacing: 16,
+        childAspectRatio: 1.18,
+      ),
+      delegate: SliverChildListDelegate(cards),
+    ),
+  );
+
+  Widget _message(String text) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Center(
+        child: Text(text, style: const TextStyle(color: WbbColors.muted)),
+      ),
+    ),
+  );
+
+  List<Widget> _body(BuildContext context) {
+    if (_filter == HomeFilter.replay && !_loading && _error == null) {
+      if (_recordings.isEmpty) return [_message('아직 다시보기 영상이 없습니다.')];
+      return [
+        _sectionTitle('다시보기'),
+        _grid([
+          for (final r in _recordings)
+            RecordingCard(
+              key: Key('recording-card-${r.id}'),
+              recording: r,
+              onTap: () => _openRecording(r),
+            ),
+        ]),
       ];
     }
     if (_loading && _items.isEmpty) {
@@ -332,40 +481,34 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (_items.isEmpty) {
       return [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Center(
-              child: Text(
-                _filter == HomeFilter.live
-                    ? '지금 방송 중인 채널이 없습니다.'
-                    : '아직 방송이 없습니다.',
-              ),
-            ),
-          ),
+        _message(
+          _filter == HomeFilter.live ? '지금 방송 중인 채널이 없습니다.' : '아직 방송이 없습니다.',
         ),
       ];
     }
-    return [
-      SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 380,
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            mainAxisExtent: 300,
-          ),
-          delegate: SliverChildBuilderDelegate(
-            (context, index) => BroadcastCard(
-              broadcast: _items[index],
-              onTap: () => _open(_items[index]),
-            ),
-            childCount: _items.length,
-          ),
-        ),
-      ),
-      if (_nextCursor.isNotEmpty)
+    Widget card(Broadcast b) =>
+        BroadcastCard(broadcast: b, onTap: () => _open(b));
+    final slivers = <Widget>[];
+    if (_filter == HomeFilter.live) {
+      slivers
+        ..add(_sectionTitle('지금 방송 중'))
+        ..add(_grid([for (final b in _items) card(b)]));
+    } else {
+      final live = _items.where((b) => b.status == 'live').toList();
+      final rest = _items.where((b) => b.status != 'live').toList();
+      if (live.isNotEmpty) {
+        slivers
+          ..add(_sectionTitle('지금 방송 중'))
+          ..add(_grid([for (final b in live) card(b)]));
+      }
+      if (rest.isNotEmpty) {
+        slivers
+          ..add(_sectionTitle(live.isEmpty ? '방송 목록' : '다른 방송'))
+          ..add(_grid([for (final b in rest) card(b)]));
+      }
+    }
+    if (_nextCursor.isNotEmpty) {
+      slivers.add(
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -384,11 +527,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-    ];
+      );
+    }
+    return slivers;
   }
 }
 
-/// One broadcast in the public list.
+/// One broadcast in the public list: thumbnail, then avatar + title + channel.
 class BroadcastCard extends StatelessWidget {
   const BroadcastCard({
     super.key,
@@ -402,72 +547,134 @@ class BroadcastCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final b = broadcast;
-    final scheme = Theme.of(context).colorScheme;
     final live = b.status == 'live';
-    return Card(
+    return InkWell(
       key: Key('broadcast-card-${b.id}'),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Container(
-                color: live
-                    ? scheme.primaryContainer
-                    : scheme.surfaceContainerHighest,
-                child: Stack(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GeneratedThumbnail(
+            seed: b.id,
+            title: b.title,
+            dimmed: !live,
+            topLeft: BroadcastStatusBadge(status: b.status),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ChannelAvatar(
+                seed: b.ownerId,
+                name: b.ownerDisplayName,
+                size: 36,
+                live: live,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Center(
-                      child: Icon(
-                        live ? Icons.live_tv : Icons.tv_off_outlined,
-                        size: 48,
-                        color: live
-                            ? scheme.onPrimaryContainer
-                            : scheme.onSurfaceVariant,
+                    Text(
+                      b.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
                       ),
                     ),
-                    Positioned(
-                      left: 8,
-                      top: 8,
-                      child: BroadcastStatusBadge(status: b.status),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${b.ownerDisplayName} · ${formatBroadcastDate(b.createdAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: WbbColors.muted,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (b.description.isNotEmpty)
+                      Text(
+                        b.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: WbbColors.muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One replay in the list.
+class RecordingCard extends StatelessWidget {
+  const RecordingCard({
+    super.key,
+    required this.recording,
+    required this.onTap,
+  });
+  final Recording recording;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = recording;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GeneratedThumbnail(
+            seed: r.broadcastId,
+            title: r.broadcastTitle,
+            topLeft: const OverlayLabel('다시보기'),
+            bottomLeft: OverlayLabel(r.durationLabel),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ChannelAvatar(seed: r.broadcastId, name: r.ownerName, size: 36),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      r.broadcastTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    Text(
+                      '${r.ownerName} · ${formatBroadcastDate(r.startedAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: WbbColors.muted,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Text(
-                b.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
-              child: Text(
-                '${b.ownerDisplayName} · ${formatBroadcastDate(b.createdAt)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            if (b.description.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                child: Text(
-                  b.description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -482,24 +689,25 @@ class BroadcastStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
-      'live' => ('LIVE', Colors.red),
-      'starting' => ('준비 중', Colors.orange),
-      'stopping' => ('종료 중', Colors.orange),
-      'ended' => ('종료', Colors.grey),
-      _ => ('대기', Colors.blueGrey),
+      'live' => ('LIVE', WbbColors.live),
+      'starting' => ('준비 중', Colors.orange.shade700),
+      'stopping' => ('종료 중', Colors.orange.shade700),
+      'ended' => ('종료', Colors.black54),
+      _ => ('대기', Colors.black54),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: status == 'live' ? color : color.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(6),
+        color: color,
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         label,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 12,
-          fontWeight: FontWeight.bold,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.3,
         ),
       ),
     );

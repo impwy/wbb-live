@@ -464,12 +464,12 @@ func (w *Worker) start(ctx context.Context, s sessionRow, oldOutputReady bool) (
 	userinfo := url.UserPassword(user, pass).String()
 	srcURL := "rtsp://" + userinfo + "@" + w.RTSPHost + "/" + source
 	outURL := "rtsp://" + userinfo + "@" + w.RTSPHost + "/" + output
-	cmd := exec.Command("ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", srcURL,
+	cmd := exec.Command("ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning", "-rtsp_transport", "tcp", "-i", srcURL,
 		"-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "main", "-pix_fmt", "yuv420p",
 		"-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-r", "30", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
 		"-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "500k", "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-f", "rtsp", "-rtsp_transport", "tcp", outURL)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = newTranscoderLog(w.Log, s.id)
 	// Keep the Linux flock open in FFmpeg (fd 3). If the worker dies but FFmpeg
 	// survives, a replacement cannot obtain the exclusive lock and start work.
 	cmd.ExtraFiles = []*os.File{w.lockFile}

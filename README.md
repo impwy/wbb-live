@@ -9,6 +9,26 @@
 | 지원 브라우저 | PC 송출: Chrome·Edge 최신 버전(탭/시스템 소리 공유는 Chromium 계열 기능) / 모바일 송출: 카메라·마이크 권한을 지원하는 최신 모바일 Chrome·Safari / 시청: 최신 PC·모바일 브라우저 |
 | 기술 스택 | Go API · Flutter Web · PostgreSQL · Redis · MediaMTX(WebRTC WHIP 수신, LL-HLS 배포) · FFmpeg |
 
+## 평가 체크리스트 대응
+
+| ID | 구현 위치 | 자동 테스트 (공개 HTTP + 실제 PostgreSQL) | 공개 서비스 확인 |
+| --- | --- | --- | --- |
+| BASE-01 | 전체 | CI: `go vet`, `go test -race ./...`, `flutter analyze`, `flutter test`, `flutter build web` | ✅ |
+| PC-01~04 | `wbb-frontend/web/wbb_media.js`(화면·탭 소리·마이크 혼합, WHIP), `internal/mediaworker`(변환·종료 정리) | `media_test.go`, `playback_test.go`, Flutter `live_detail_test.dart` | ✅ 합성 장치 송출·종료 (실제 PC 캡처는 수동 확인 대상) |
+| MOB-01~03 | `wbb_media.js` 카메라·마이크 경로, `lib/screens/broadcast_detail_screen.dart` | Flutter `live_detail_test.dart`(카메라 시작·숨김 종료) | ✅ 실제 휴대폰(LTE) 송출 → 다른 기기 시청 → 종료 |
+| BCAST-01 | `internal/broadcasts`, `lib/screens/broadcast_form_screen.dart` | `TestBroadcastLifecycle`, `TestBroadcastValidation`, `TestBroadcastVersionConflict` | ✅ |
+| BCAST-02 | `lib/screens/home_screen.dart`(목록·방송 중 필터), `broadcast_detail_screen.dart`(LL-HLS 재생) | `TestBroadcastPagination`, `TestPlaybackAndEveryHLSObjectStopAtSessionEnd` | ✅ 다른 회선 익명 재생 |
+| BCAST-03 | `internal/livesessions`, `internal/mediaworker` | `sessions_test.go`, `TestPlaybackAndEveryHLSObjectStopAtSessionEnd` | ✅ 종료 후 재생 409 |
+| BCAST-04 | PostgreSQL 마이그레이션 `0003`·`0005` | `TestPersistenceAcrossServerRestart` | ✅ |
+| AUTH-01 | `internal/auth`, `lib/state/auth_controller.dart` | `auth_flow_test.go`(가입·로그인·refresh 회전·로그아웃), `evaluation_test.go` | ✅ 평가용 바로 로그인 |
+| AUTH-02 | `requireAuth` 미들웨어, 공개 목록·재생 | `TestBroadcastCreateRequiresAuth`, `TestWHIPRejectsUnauthorisedPublication` | ✅ |
+| AUTH-03 | `broadcasts.checkOwner`, `livesessions` 소유자 검사 | `TestBroadcastOwnershipMatrix`, `TestEvaluationLoginPublicAuthAndOwnership` | ✅ |
+| COMMENT-01·02 | `internal/comments`, `lib/screens/comments_panel.dart` | `TestCommentsCRUDAndAuthorAuthorization`(타인 403·비로그인 401) | ✅ |
+| DONATION-01~03 | `internal/donations`(서버 내장 테스트 결제 게이트웨이), `lib/screens/donations_panel.dart` | `TestDonationsVerifyApprovalAndCreditOnce`(위조 금액·타인 거절, 중복 승인 1회 적립, 합계) | ✅ |
+| VOD-01~03 | `internal/mediaworker`(MP4 녹화), `internal/recordings`, `lib/screens/recording_screen.dart` | `TestRecordingsRegisterListAndServe`(위치·메타데이터 저장, 재시작 후 조회, Range 재생) | ✅ |
+
+선택 기능 상세 근거: [docs/verification/optional-features.md](docs/verification/optional-features.md). 필수 기능 진행 기록: [docs/verification/required-implementation-status.md](docs/verification/required-implementation-status.md).
+
 ## 평가용 로그인
 
 1. https://live.wombatburrow.com 접속 → 오른쪽 위 **로그인**.

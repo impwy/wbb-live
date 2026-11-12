@@ -1,5 +1,7 @@
 # 필수 요구사항 구현·인수 현황
 
+> 2026-11-12 최신 요약: 필수 기능은 공개 서비스 https://live.wombatburrow.com 에서 외부 회선 송출·시청·종료와 실제 휴대폰 카메라 송출까지 확인했다. 선택 기능(COMMENT·DONATION·VOD) 구현과 테스트 결과는 [optional-features.md](optional-features.md)에 있다. 아래 본문은 단계별 진행 기록이다.
+
 판정 기준은 `requirements/01-contest-requirements.md`와 `requirements/02-acceptance-tests.md`다. 사용자의 목표는 모든 필수 기능 구현이며, 일부 티켓·합성 테스트 통과로 전체 완료를 대신하지 않는다. 구현과 실제 기기 인수는 별도로 기록한다.
 
 현재 확인 기준:04-B1 서버 제품107cdd8 및 [Draft PR6](https://github.com/impwy/wbb-live/pull/6)의 backend/frontend CI 통과. 서버 정상 미디어·권한·종료·장애 경계의 독립 검증과 두 축 리뷰를 마쳤다. 상세 근거는 [04-B 검증 기록](04b-local-secure-media.md)을 따른다.04-B2 Flutter PC 송출·익명 시청은 work/flutter-live에서 독립 analyze0·Flutter53개·JS3개·릴리스 빌드·두 Chrome 제품 UI 검증과 두 축 리뷰를 통과했다. [04-B2 근거](04b2-flutter-live.md)를 따른다. 05-A 제품d762510과 Draft PR8의 backend/frontend CI가 통과했다. 카메라·마이크 제품 통합도 정상/합성숨김 종료의 독립 Chrome 검증을 통과했다. [05-A 근거](05a-mobile-single-rendition.md)를 따른다. 실제 기기 인수는 미완료다.
@@ -44,4 +46,4 @@
 3.07-C Kafka outbox 전달은 독립 검증·게시 완료다. 07-A1 격리 종료 계약도 통과했다. 07-A2 제품 매트릭스와 검증기 정리를 반영한 뒤 09-A 평가 로그인·최종 기능 회귀·공개 인수를 우선 진행한다. 07-B inbox/재조정,08 요청된 관측성,03 ABR·05 품질 선택,09 운영 규모 목표는 별도 범위로 계속 추적한다.
 4. 실제 휴대폰/외부망/Google 자격 인수는 검증 준비와 사용자 환경이 갖춰진 뒤 수행한다. 로컬 자동 검사로 완료 표시하지 않는다. 사용자가 로컬 테스트만 요청한 현재 외부 서비스를 임의로 다시 기동하지 않는다.
 
-댓글·도네이션·녹화는 선택 기능이며 필수 기능 완료 전에 확장하지 않는다.03 ABR, 실제 VAAPI·동시 수용량, k3s·관측성의 명시된 프로젝트 약속을 이 표에서 제외했다고 완료하거나 취소한 것은 아니다.
+2026-11-12 필수 기능 공개 인수 뒤 선택 기능(댓글·도네이션·녹화 및 다시보기)을 구현·배포했다. 근거는 [선택 요구사항 구현·검증 기록](optional-features.md)을 따른다.03 ABR, 실제 VAAPI·동시 수용량, k3s·관측성의 명시된 프로젝트 약속을 이 표에서 제외했다고 완료하거나 취소한 것은 아니다.

@@ -1,0 +1,45 @@
+# Internal edge behind the host Caddy (TLS terminates on the host).
+{
+    admin off
+    auto_https off
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+:8080 {
+    route {
+        request_header -X-WBB-Media-Secret
+        request_header -X-WBB-Original-URI
+
+        @media path /media/*
+        header @media Cache-Control no-store
+        forward_auth @media api:8080 {
+            uri /internal/hls-authorize
+            header_up X-WBB-Media-Secret {$WBB_MEDIA_SECRET}
+            header_up X-WBB-Original-URI {uri}
+        }
+        handle_path /media/* {
+            reverse_proxy mediamtx:8888 {
+                header_up -Authorization
+                header_up -Cookie
+                header_down Location ^/(.*) /media/$1
+                transport http {
+                    response_header_timeout 30s
+                }
+            }
+        }
+        handle /internal/* {
+            respond 404
+        }
+        handle /api/v1/* {
+            reverse_proxy api:8080
+        }
+        handle {
+            root * /srv/www
+            try_files {path} /index.html
+            header /index.html Cache-Control no-cache
+            file_server
+        }
+    }
+}

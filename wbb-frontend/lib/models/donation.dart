@@ -34,12 +34,10 @@ class DonationOrder {
     required this.orderId,
     required this.amount,
     required this.orderName,
-    required this.customerKey,
-    required this.clientKey,
+    required this.recipient,
   });
   final String orderId;
   final int amount;
   final String orderName;
-  final String customerKey;
-  final String clientKey;
+  final String recipient;
 }

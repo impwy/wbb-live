@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/payments/config", s.handlePaymentsConfig)
 	mux.HandleFunc("GET /api/v1/broadcasts/{id}/donations", s.handleListDonations)
 	mux.HandleFunc("POST /api/v1/broadcasts/{id}/donations", s.requireAuth(requireOrigin(s, s.handleCreateDonation)))
+	mux.HandleFunc("POST /api/v1/payments/test-checkout", s.requireAuth(requireOrigin(s, s.handleTestCheckout)))
 	mux.HandleFunc("POST /api/v1/donations/confirm", s.requireAuth(requireOrigin(s, s.handleConfirmDonation)))
 	mux.HandleFunc("POST /api/v1/payments/webhook", s.handlePaymentWebhook)
 	mux.HandleFunc("GET /api/v1/recordings", s.handleListRecordings)

@@ -8,7 +8,6 @@ import 'media/live_publisher.dart';
 import 'media/media_factory.dart';
 import 'media/media_platform.dart';
 import 'screens/home_screen.dart';
-import 'screens/donation_result_screen.dart';
 import 'screens/google_complete_screen.dart';
 import 'state/auth_controller.dart';
 
@@ -37,9 +36,6 @@ class _WbbAppState extends State<WbbApp> {
   Widget _home(Uri uri) {
     if (uri.path == '/auth/google/complete') {
       return GoogleCompleteScreen(error: uri.queryParameters['error']);
-    }
-    if (uri.path == '/donations/success' || uri.path == '/donations/fail') {
-      return DonationResultScreen(uri: uri);
     }
     return const HomeScreen();
   }

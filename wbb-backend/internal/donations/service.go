@@ -1,5 +1,5 @@
-// Package donations records donations paid through a payment provider in
-// test mode. The server fixes the recipient and amount when the order is
+// Package donations records donations paid through a test-mode payment
+// provider (an in-process gateway, MemoryProvider). The server fixes the recipient and amount when the order is
 // created and confirms a payment only after the provider reports it DONE
 // with the same order id and amount. Confirmation is idempotent: repeated
 // approval notices for an order credit it once.
@@ -36,17 +36,17 @@ type Payment struct {
 	TotalAmount int
 }
 
-// Provider confirms and looks up payments (Toss Payments in test mode).
+// Provider confirms and looks up payments.
 type Provider interface {
 	Confirm(ctx context.Context, paymentKey, orderID string, amount int) (Payment, error)
 	Get(ctx context.Context, paymentKey string) (Payment, error)
 }
 
 type Order struct {
-	OrderID     string `json:"orderId"`
-	Amount      int    `json:"amount"`
-	OrderName   string `json:"orderName"`
-	CustomerKey string `json:"customerKey"`
+	OrderID   string `json:"orderId"`
+	Amount    int    `json:"amount"`
+	OrderName string `json:"orderName"`
+	Recipient string `json:"recipient"`
 }
 
 type Donation struct {
@@ -89,11 +89,14 @@ func (s *Service) CreateOrder(ctx context.Context, donorID, broadcastID string, 
 	if amount < MinAmount || amount > MaxAmount || len([]rune(message)) > 200 {
 		return Order{}, ErrInvalidInput
 	}
-	var title string
+	var title, recipient string
 	orderID := newOrderID()
-	err := s.db.QueryRow(ctx, `INSERT INTO donations (order_id, broadcast_id, recipient_id, donor_id, amount, message)
-		SELECT $1, b.id, b.owner_id, $3, $4, $5 FROM broadcasts b WHERE b.id::text = $2 AND b.deleted_at IS NULL
-		RETURNING (SELECT title FROM broadcasts WHERE id::text = $2)`, orderID, broadcastID, donorID, amount, message).Scan(&title)
+	err := s.db.QueryRow(ctx, `WITH b AS (
+			SELECT b.id, b.owner_id, b.title, u.display_name FROM broadcasts b JOIN users u ON u.id = b.owner_id
+			WHERE b.id::text = $2 AND b.deleted_at IS NULL),
+		ins AS (INSERT INTO donations (order_id, broadcast_id, recipient_id, donor_id, amount, message)
+			SELECT $1, b.id, b.owner_id, $3, $4, $5 FROM b RETURNING 1)
+		SELECT b.title, b.display_name FROM b, ins`, orderID, broadcastID, donorID, amount, message).Scan(&title, &recipient)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Order{}, ErrNotFound
 	}
@@ -104,7 +107,40 @@ func (s *Service) CreateOrder(ctx context.Context, donorID, broadcastID string, 
 	if len(name) > 100 {
 		name = name[:100]
 	}
-	return Order{OrderID: orderID, Amount: amount, OrderName: string(name), CustomerKey: donorID}, nil
+	return Order{OrderID: orderID, Amount: amount, OrderName: string(name), Recipient: recipient}, nil
+}
+
+// authorizer is a provider whose test checkout runs in this process.
+type authorizer interface {
+	Authorize(orderID string, amount int) Payment
+}
+
+// TestCheckout plays the gateway's payment window for the donor's pending
+// order. The amount comes from the stored order, never from the client.
+// Declining marks the order failed.
+func (s *Service) TestCheckout(ctx context.Context, donorID, orderID string, approve bool) (Payment, error) {
+	gateway, ok := s.provider.(authorizer)
+	if !ok {
+		return Payment{}, ErrNotConfigured
+	}
+	p, err := s.load(ctx, orderID)
+	if err != nil {
+		return Payment{}, err
+	}
+	if p.donorID != donorID {
+		return Payment{}, ErrForbidden
+	}
+	if p.status != "pending" {
+		return Payment{}, ErrNotApproved
+	}
+	if !approve {
+		_, err := s.db.Exec(ctx, `UPDATE donations SET status='failed' WHERE order_id=$1 AND status='pending'`, orderID)
+		if err != nil {
+			return Payment{}, err
+		}
+		return Payment{}, ErrNotApproved
+	}
+	return gateway.Authorize(orderID, p.amount), nil
 }
 
 type pending struct {

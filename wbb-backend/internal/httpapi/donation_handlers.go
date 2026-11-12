@@ -11,12 +11,9 @@ import (
 	"github.com/impwy/wbb-live/wbb-backend/internal/donations"
 )
 
-func newDonations(cfg config.Config, db *pgxpool.Pool) *donations.Service {
-	var provider donations.Provider
-	if cfg.TossSecretKey != "" {
-		provider = donations.NewToss(cfg.TossSecretKey)
-	}
-	return donations.NewService(db, provider)
+// Donations use the in-process test-mode gateway; no real payment happens.
+func newDonations(_ config.Config, db *pgxpool.Pool) *donations.Service {
+	return donations.NewService(db, donations.NewMemoryProvider())
 }
 
 // SetPaymentProvider replaces the provider (tests use a fake).
@@ -24,11 +21,28 @@ func (s *Server) SetPaymentProvider(p donations.Provider) {
 	s.donations = donations.NewService(s.db, p)
 }
 
-// GET /api/v1/payments/config (public): whether donations are enabled and
-// the public test client key for the browser SDK.
+// GET /api/v1/payments/config (public): whether donations are enabled.
 func (s *Server) handlePaymentsConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.donations.Enabled(), "clientKey": s.cfg.TossClientKey})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.donations.Enabled(), "mode": "test"})
+}
+
+// POST /api/v1/payments/test-checkout (signed-in donor): the test gateway's
+// payment window. Approving issues a payment key for the stored amount.
+func (s *Server) handleTestCheckout(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID string `json:"orderId"`
+		Approve bool   `json:"approve"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		return
+	}
+	p, err := s.donations.TestCheckout(r.Context(), authUser(r).ID, req.OrderID, req.Approve)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"paymentKey": p.PaymentKey, "orderId": p.OrderID, "amount": p.TotalAmount, "status": p.Status})
 }
 
 // GET /api/v1/broadcasts/{id}/donations (public): confirmed donations and total.
@@ -55,7 +69,7 @@ func (s *Server) handleCreateDonation(w http.ResponseWriter, r *http.Request) {
 		writeDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"order": order, "clientKey": s.cfg.TossClientKey})
+	writeJSON(w, http.StatusCreated, map[string]any{"order": order})
 }
 
 // POST /api/v1/donations/confirm (signed-in donor): confirms after the

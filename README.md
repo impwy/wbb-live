@@ -65,10 +65,13 @@
 
 ### 선택 기능: 도네이션 (DONATION-01~03)
 
-1. 방송 상세 화면의 **후원하기**에서 금액(1,000~1,000,000원)과 메시지를 고르면, 서버가 후원 대상(방송 소유자)과 금액을 고정한 주문을 만들고 토스페이먼츠 **테스트 결제창**이 열립니다. 실제 금액은 청구되지 않습니다.
-2. 결제 후 돌아오면 서버가 저장된 주문 금액·대상·후원자와 결제사 승인 결과(`DONE`, 금액, 주문번호)를 대조한 뒤에만 후원을 확정합니다.
-3. 같은 승인 통지가 다시 와도(새로고침, 웹훅 재전송) 주문 단위로 한 번만 적립합니다. 웹훅은 본문을 믿지 않고 결제사에서 다시 조회합니다.
-4. 방송 상세에 방송별 후원 내역과 합계가 표시됩니다. 서버에 테스트 키(`WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY`, `test_` 접두사만 허용)를 설정해야 버튼이 나타납니다.
+결제는 **서버에 내장한 테스트 결제 모듈**(메모리 기반 테스트 게이트웨이)로 진행하며 실제 금액은 청구되지 않습니다.
+
+1. 로그인 후 방송 상세의 **후원하기**에서 금액(1,000~1,000,000원)과 메시지를 고릅니다. 서버가 후원 대상(방송 소유자)과 금액을 고정한 주문을 PostgreSQL에 만듭니다.
+2. **테스트 결제창**에서 **결제 승인**(또는 결제 실패 처리)을 누르면 테스트 게이트웨이가 저장된 주문 금액으로 결제 키를 발급합니다. 클라이언트가 보낸 금액은 사용하지 않습니다.
+3. 서버가 게이트웨이에 승인을 요청하고, 결과(`DONE`, 주문번호, 금액)를 주문과 대조한 뒤에만 후원을 확정합니다. 금액·주문·후원자가 다르면 거절합니다.
+4. 완료 창의 **승인 통지 다시 보내기**로 같은 승인 통지를 반복해도 주문 단위로 한 번만 적립되는 것을 확인할 수 있습니다(`POST /donations/confirm` 반복, `POST /payments/webhook` 재전송 모두 멱등).
+5. 방송 상세에 방송별 후원 내역과 합계가 표시됩니다.
 
 ### 선택 기능: 녹화·다시보기 (VOD-01~03)
 
@@ -153,7 +156,6 @@ make ci               # vet, test, flutter analyze/test/build
 | `WBB_EVAL_LOGIN_ENABLED/EMAIL/PASSWORD` | 평가용 바로 로그인 (세 값 모두 설정 또는 모두 미설정) |
 | `WBB_GOOGLE_CLIENT_ID/SECRET/CALLBACK_URI` | Google 로그인(선택, 세 값 모두 필요) |
 | `WBB_ICE_HOSTS`, `WBB_ICE_PORT` | 브라우저에 알릴 WebRTC 후보 주소와 포트 (deploy/live) |
-| `WBB_TOSS_CLIENT_KEY`, `WBB_TOSS_SECRET_KEY` | 선택. 도네이션용 토스페이먼츠 테스트 키(`test_` 접두사만 허용). 미설정 시 후원 기능 숨김 |
 | `WBB_RECORDINGS_DIR` | 선택. 녹화 저장 경로(worker 쓰기, API 읽기 전용). 미설정 시 녹화·다시보기 비활성 |
 | `WBB_TURN_KEY_ID`, `WBB_TURN_API_TOKEN` | 선택. Cloudflare TURN 키. 설정하면 방송자 브라우저가 단기 TURN 자격(`GET /api/v1/media/ice-servers`, 로그인 필요)으로 미디어를 중계해, ICE 포트를 열 수 없는 환경에서도 송출됩니다 |
 
@@ -204,10 +206,11 @@ media worker: 송출 감지 → FFmpeg 720p 변환 → LL-HLS, 종료 시 연결
 | GET `/broadcasts/{id}/comments` | 공개 | 최근 댓글(오래된 순) |
 | POST `/broadcasts/{id}/comments` | 로그인 | `{body}` 1~500자 |
 | PATCH·DELETE `/comments/{id}` | 작성자 | 다른 사용자 403 |
-| GET `/payments/config` | 공개 | `{enabled, clientKey}` (테스트 키만) |
+| GET `/payments/config` | 공개 | `{enabled, mode:"test"}` |
 | POST `/broadcasts/{id}/donations` | 로그인 | 주문 생성 `{amount, message}` → `{order}` |
+| POST `/payments/test-checkout` | 주문한 후원자 | 테스트 결제창: `{orderId, approve}` → 결제 키(저장된 금액) |
 | POST `/donations/confirm` | 주문한 후원자 | 결제사 승인·금액·대상 검증 후 확정, 반복 호출 시 중복 적립 없음 |
-| POST `/payments/webhook` | 결제사 | 결제사 재조회 후 멱등 확정 |
+| POST `/payments/webhook` | 게이트웨이 | 게이트웨이 재조회 후 멱등 확정 |
 | GET `/broadcasts/{id}/donations` | 공개 | 확정 내역·합계 |
 | GET `/recordings`, `/recordings/{id}`, `/broadcasts/{id}/recordings` | 공개 | 다시보기 목록·상세 |
 | GET `/recordings/{id}/media` | 공개 | MP4 (Range) |

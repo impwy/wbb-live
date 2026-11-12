@@ -475,9 +475,20 @@ class ApiClient {
       orderId: order['orderId'] as String,
       amount: (order['amount'] as num).toInt(),
       orderName: order['orderName'] as String,
-      customerKey: order['customerKey'] as String,
-      clientKey: data['clientKey'] as String? ?? '',
+      recipient: order['recipient'] as String? ?? '',
     );
+  }
+
+  /// The in-server test payment window. Approving returns the payment key
+  /// issued for the stored order amount; declining fails the order.
+  Future<String> testCheckout(String orderId, {required bool approve}) async {
+    final data = await _request(
+      'POST',
+      '/payments/test-checkout',
+      body: {'orderId': orderId, 'approve': approve},
+      auth: true,
+    );
+    return data['paymentKey'] as String;
   }
 
   /// Returns true when this call credited the donation, false when it had

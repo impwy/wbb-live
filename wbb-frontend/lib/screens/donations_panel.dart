@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import '../api/wbb_api.dart';
 import '../models/donation.dart';
-import '../payments/toss.dart';
 import '../state/auth_controller.dart';
 import 'home_screen.dart' show formatBroadcastDate;
 import 'login_screen.dart';
@@ -88,20 +87,53 @@ class _DonationsPanelState extends State<DonationsPanel> {
         amount: choice.$1,
         message: choice.$2,
       );
-      final origin = Uri.base.origin;
-      final back = Uri.encodeQueryComponent(widget.broadcastId);
-      await requestTossPayment(order.clientKey, {
-        'orderId': order.orderId,
-        'amount': order.amount,
-        'orderName': order.orderName,
-        'customerKey': order.customerKey,
-        'successUrl': '$origin/donations/success?broadcastId=$back',
-        'failUrl': '$origin/donations/fail?broadcastId=$back',
-      });
+      if (!mounted) return;
+      // The test payment window (in-server gateway, no real charge).
+      final approve = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _TestPaymentWindow(order: order),
+      );
+      if (!mounted || approve == null) return;
+      final api = context.read<ApiClient>();
+      final paymentKey = await api.testCheckout(
+        order.orderId,
+        approve: approve,
+      );
+      // Server-side confirmation: approval, amount and target are verified
+      // against the stored order before the donation is credited.
+      final credited = await api.confirmDonation(
+        paymentKey: paymentKey,
+        orderId: order.orderId,
+        amount: order.amount,
+      );
+      await _load();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _DonationResult(
+          order: order,
+          paymentKey: paymentKey,
+          credited: credited,
+          onResend: () async {
+            final again = await api.confirmDonation(
+              paymentKey: paymentKey,
+              orderId: order.orderId,
+              amount: order.amount,
+            );
+            await _load();
+            return again;
+          },
+        ),
+      );
     } on ApiException catch (e) {
-      if (mounted) _toast('후원 요청 실패: ${e.message}');
-    } catch (_) {
-      if (mounted) _toast('결제창을 열지 못했거나 결제를 취소했습니다.');
+      if (mounted) {
+        _toast(
+          e.code == 'payment_not_approved'
+              ? '결제가 승인되지 않아 후원이 취소되었습니다.'
+              : '후원 실패: ${e.message}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -140,7 +172,7 @@ class _DonationsPanelState extends State<DonationsPanel> {
         ),
         const SizedBox(height: 4),
         Text(
-          '테스트 결제 모드입니다. 실제 금액이 청구되지 않습니다.',
+          '서버 내장 테스트 결제로 진행되며 실제 금액은 청구되지 않습니다.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         if (summary != null)
@@ -241,6 +273,126 @@ class _DonationDialogState extends State<_DonationDialog> {
               ? null
               : () => Navigator.pop(context, (_value!, _message.text.trim())),
           child: Text(_value == null ? '금액 확인' : '${formatWon(_value!)} 결제'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Payment window of the in-server test gateway.
+class _TestPaymentWindow extends StatelessWidget {
+  const _TestPaymentWindow({required this.order});
+  final DonationOrder order;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('테스트 결제'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('상품: ${order.orderName}'),
+          Text('받는 사람: ${order.recipient}'),
+          Text(
+            '결제 금액: ${formatWon(order.amount)}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '주문번호 ${order.orderId}\n테스트 모드: 실제 결제가 일어나지 않습니다.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('test-payment-decline'),
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('결제 실패 처리'),
+        ),
+        FilledButton(
+          key: const Key('test-payment-approve'),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('결제 승인'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Result of a confirmed donation, with a duplicate-notice check.
+class _DonationResult extends StatefulWidget {
+  const _DonationResult({
+    required this.order,
+    required this.paymentKey,
+    required this.credited,
+    required this.onResend,
+  });
+  final DonationOrder order;
+  final String paymentKey;
+  final bool credited;
+  final Future<bool> Function() onResend;
+
+  @override
+  State<_DonationResult> createState() => _DonationResultState();
+}
+
+class _DonationResultState extends State<_DonationResult> {
+  String? _resend;
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('후원 완료'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.credited
+                ? '${widget.order.recipient}님에게 ${formatWon(widget.order.amount)} 후원했습니다.'
+                : '이미 처리된 결제입니다.',
+            key: const Key('donation-result'),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '결제 키 ${widget.paymentKey}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_resend != null) ...[
+            const SizedBox(height: 8),
+            Text(_resend!, key: const Key('donation-resend-result')),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('donation-resend'),
+          onPressed: _busy
+              ? null
+              : () async {
+                  setState(() => _busy = true);
+                  try {
+                    final again = await widget.onResend();
+                    if (!mounted) return;
+                    setState(() {
+                      _resend = again
+                          ? '다시 적립되었습니다(오류).'
+                          : '같은 승인 통지를 다시 보냈지만 중복 적립되지 않았습니다.';
+                    });
+                  } on ApiException catch (e) {
+                    if (mounted) setState(() => _resend = e.message);
+                  } finally {
+                    if (mounted) setState(() => _busy = false);
+                  }
+                },
+          child: const Text('승인 통지 다시 보내기'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('확인'),
         ),
       ],
     );
